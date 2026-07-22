@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import Login from './components/Login.jsx'
-import Dashboard from './components/Dashboard.jsx'
+import Login from './components/Login'
+import Dashboard from './components/Dashboard'
 
 function App() {
   // Inicializamos el estado leyendo desde sessionStorage
