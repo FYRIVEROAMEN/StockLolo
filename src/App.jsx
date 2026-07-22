@@ -3,6 +3,8 @@ import Login from './components/Login'
 import Dashboard from './components/Dashboard'
 
 
+
+
 function App() {
   // Inicializamos el estado leyendo desde sessionStorage
   const [isLogged, setIsLogged] = useState(() => {
