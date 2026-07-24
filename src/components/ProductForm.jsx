@@ -19,9 +19,8 @@ function ProductForm({ onClose, editId, onSave }) {
   const [imagenPreview, setImagenPreview] = useState(null)
   const [imagenURL, setImagenURL] = useState('')
 
-  // Estados para el escáner de código de barras
   const [isScanning, setIsScanning] = useState(false)
-  const streamRef = useRef(null)
+  const codeReaderRef = useRef(null)
   const isCancelledRef = useRef(false)
 
   useEffect(() => {
@@ -48,8 +47,33 @@ function ProductForm({ onClose, editId, onSave }) {
   }, [editId])
 
   const subirImagenCloudinary = async (file) => {
+    let fileToUpload = file
+    
+    if (file.type === 'image/webp') {
+      try {
+        const img = new Image()
+        img.src = URL.createObjectURL(file)
+        await new Promise((resolve, reject) => {
+          img.onload = resolve
+          img.onerror = reject
+        })
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        const blob = await new Promise(resolve => {
+          canvas.toBlob(resolve, 'image/jpeg', 0.9)
+        })
+        fileToUpload = new File([blob], file.name.replace('.webp', '.jpg'), { type: 'image/jpeg' })
+        URL.revokeObjectURL(img.src)
+      } catch (err) {
+        console.error('Error convirtiendo WebP:', err)
+      }
+    }
+    
     const formData = new FormData()
-    formData.append('file', file)
+    formData.append('file', fileToUpload)
     formData.append('upload_preset', import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET)
     const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
 
@@ -66,47 +90,76 @@ function ProductForm({ onClose, editId, onSave }) {
     }
   }
 
-  // 👇 LÓGICA DE ESCANEO DE CÓDIGO DE BARRAS
+  // ✅ MÉTODO OFICIAL Y ESTABLE DE ZXING
   const handleScanBarcode = async () => {
     setIsScanning(true)
     isCancelledRef.current = false
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
-      })
-      streamRef.current = stream
-      await new Promise(resolve => setTimeout(resolve, 300))
-
       const codeReader = new BrowserMultiFormatReader()
-      const result = await codeReader.decodeFromStream(stream, 'video-producto')
+      codeReaderRef.current = codeReader
 
-      if (isCancelledRef.current) return
+      const scannedCode = await new Promise((resolve, reject) => {
+        let timeoutId = null
+        let found = false
+        
+        timeoutId = setTimeout(() => {
+          if (!found && !isCancelledRef.current) {
+            reject(new Error('Tiempo de escaneo agotado'))
+          }
+        }, 30000)
 
-      const barcode = result.getText()
-      setForm({ ...form, barcode })
+        codeReader.decodeFromVideoDevice(
+          undefined, 
+          'video-producto', 
+          (result, err) => {
+            if (isCancelledRef.current) {
+              clearTimeout(timeoutId)
+              reject(new Error('Escaneo cancelado'))
+              return
+            }
 
-      Swal.fire({
-        title: '¡Código detectado!',
-        text: barcode,
-        icon: 'success',
-        timer: 1500,
-        showConfirmButton: false
+            if (result) {
+              found = true
+              clearTimeout(timeoutId)
+              resolve(result.getText())
+            }
+            
+            if (err && err.name !== 'NotFoundException') {
+              console.warn('Error escaneando:', err)
+            }
+          }
+        )
       })
-    } catch (err) {
-      if (!isCancelledRef.current) {
+
+      if (scannedCode) {
+        setForm({ ...form, barcode: scannedCode })
         Swal.fire({
-          title: 'Error al escanear',
-          text: 'No se detectó ningún código. Intentá de nuevo con buena luz.',
-          icon: 'error',
-          confirmButtonColor: '#dc2626'
+          title: '¡Código detectado!',
+          text: scannedCode,
+          icon: 'success',
+          timer: 1500,
+          showConfirmButton: false
         })
+      }
+      
+    } catch (err) {
+      console.error('Error en escáner:', err)
+      
+      if (!isCancelledRef.current) {
+        let mensaje = 'Error al escanear. Intentá de nuevo.'
+        if (err.name === 'NotAllowedError') mensaje = 'Permiso de cámara denegado.'
+        else if (err.name === 'NotFoundError') mensaje = 'No se encontró una cámara.'
+        else if (err.name === 'NotReadableError') mensaje = 'La cámara está en uso.'
+        else if (err.message === 'Tiempo de escaneo agotado') mensaje = 'No se detectó ningún código en 30 segundos.'
+        
+        Swal.fire({ title: 'Error al escanear', text: mensaje, icon: 'error', confirmButtonColor: '#dc2626' })
       }
     } finally {
       setIsScanning(false)
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-        streamRef.current = null
+      if (codeReaderRef.current) {
+        codeReaderRef.current.reset()
+        codeReaderRef.current = null
       }
     }
   }
@@ -114,9 +167,9 @@ function ProductForm({ onClose, editId, onSave }) {
   const handleCloseScan = () => {
     isCancelledRef.current = true
     setIsScanning(false)
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
+    if (codeReaderRef.current) {
+      codeReaderRef.current.reset()
+      codeReaderRef.current = null
     }
   }
 
@@ -173,7 +226,6 @@ function ProductForm({ onClose, editId, onSave }) {
             <input value={form.categoria} onChange={e => setForm({...form, categoria: e.target.value})} className="input-lg" placeholder="Ej: Remeras, Pantalones" />
           </div>
 
-          {/* 👇 CAMPO CÓDIGO DE BARRAS CON BOTÓN DE ESCANEO */}
           <div>
             <label className="block text-base font-bold text-gray-700 mb-2">Código de Barras</label>
             <div className="relative">
@@ -219,7 +271,7 @@ function ProductForm({ onClose, editId, onSave }) {
             <label className="block text-base font-bold text-gray-700 mb-2">Imagen del Producto</label>
             <input
               type="file"
-              accept="image/*"
+              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
               onChange={(e) => {
                 const file = e.target.files[0]
                 if (file) {
@@ -231,11 +283,7 @@ function ProductForm({ onClose, editId, onSave }) {
               style={{ padding: '10px', height: 'auto' }}
             />
             {imagenPreview && (
-              <img
-                src={imagenPreview}
-                alt="Vista previa"
-                style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', marginTop: '10px', border: '1px solid #ddd' }}
-              />
+              <img src={imagenPreview} alt="Vista previa" style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', marginTop: '10px', border: '1px solid #ddd' }} />
             )}
           </div>
 
@@ -246,30 +294,19 @@ function ProductForm({ onClose, editId, onSave }) {
         </form>
       </div>
 
-      {/* 👇 OVERLAY DEL ESCÁNER */}
       {isScanning && (
         <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-[60] p-4">
           <div className="relative w-full max-w-md">
             <div className="relative w-full h-80 bg-black rounded-2xl overflow-hidden border-4 border-green-500 shadow-2xl">
-              <video
-                id="video-producto"
-                className="w-full h-full object-cover"
-                autoPlay
-                playsInline
-              />
+              <video id="video-producto" className="w-full h-full object-cover" autoPlay playsInline />
               <div className="absolute inset-0 pointer-events-none">
                 <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse" />
               </div>
             </div>
-
             <div className="mt-6 text-center">
               <h3 className="text-xl font-bold text-white mb-2">Escaneá el código de barras</h3>
               <p className="text-gray-300 mb-6 text-sm">Apunta la cámara al código del producto.</p>
-
-              <button
-                onClick={handleCloseScan}
-                className="btn btn-danger w-full"
-              >
+              <button onClick={handleCloseScan} className="btn btn-danger w-full">
                 <X className="w-5 h-5" /> Cancelar
               </button>
             </div>

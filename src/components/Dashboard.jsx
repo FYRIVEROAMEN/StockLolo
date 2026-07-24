@@ -161,9 +161,9 @@ const addToCartFromDashboard = (product) => {
             {/* Stats: carrusel horizontal en mobile, grid en desktop */}
             <div className="mb-6">
               <div className="sm:hidden flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory">
-                <div className="snap-center shrink-0 w-[70%] bg-gradient-to-br from-gray-50 to-gray-100 p-4 rounded-2xl border border-gray-200">
-                  <p className="text-sm text-gray-600 font-medium">Total Productos</p>
-                  <p className="text-3xl font-bold text-gray-800 mt-1">{totalProductos}</p>
+                <div className="snap-center shrink-0 w-[70%] bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-2xl border border-indigo-200">
+                  <p className="text-sm text-indigo-700 font-medium">Total Items</p>
+                  <p className="text-3xl font-bold text-indigo-900 mt-1">{totalProductos}</p>
                 </div>
                 <div className="snap-center shrink-0 w-[70%] bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-2xl border border-blue-200">
                   <p className="text-sm text-blue-700 font-medium">Stock Total</p>

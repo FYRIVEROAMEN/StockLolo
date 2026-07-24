@@ -11,7 +11,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
   const [whatsappNumber, setWhatsappNumber] = useState('')
   const [isScanning, setIsScanning] = useState(false)
   
-  const streamRef = useRef(null)
+  const codeReaderRef = useRef(null)
   const isCancelledRef = useRef(false)
 
   useEffect(() => {
@@ -151,57 +151,102 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
     }
   }
 
+  // ✅ MÉTODO OFICIAL Y ESTABLE DE ZXING
   const handleScan = async () => {
     setIsScanning(true)
     isCancelledRef.current = false
-    
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: 'environment' } 
-      })
-      streamRef.current = stream
-      await new Promise(resolve => setTimeout(resolve, 300))
-
       const codeReader = new BrowserMultiFormatReader()
-      const result = await codeReader.decodeFromStream(stream, 'video')
-      
-      if (isCancelledRef.current) return
+      codeReaderRef.current = codeReader
 
-      const barcode = result.getText()
-      const product = productos.find(p => p.barcode === barcode || p.codigo_barras === barcode)
-      
-      if (product) {
-        addToCart(product)
-        Swal.fire({
-          title: '¡Producto agregado!',
-          text: product.nombre,
-          icon: 'success',
-          timer: 1500,
-          showConfirmButton: false
-        })
-      } else {
-        Swal.fire({
-          title: 'Código no encontrado',
-          text: `No se encontró un producto con el código: ${barcode}`,
-          icon: 'warning',
-          confirmButtonColor: '#dc2626'
-        })
+      const scannedCode = await new Promise((resolve, reject) => {
+        let timeoutId = null
+        let found = false
+        
+        timeoutId = setTimeout(() => {
+          if (!found && !isCancelledRef.current) {
+            reject(new Error('Tiempo de escaneo agotado'))
+          }
+        }, 30000)
+
+        // decodeFromVideoDevice maneja la cámara y el video element internamente
+        codeReader.decodeFromVideoDevice(
+          undefined, // undefined = usa la cámara por defecto
+          'video',   // ID del elemento <video> en el JSX de abajo
+          (result, err) => {
+            if (isCancelledRef.current) {
+              clearTimeout(timeoutId)
+              reject(new Error('Escaneo cancelado'))
+              return
+            }
+
+            if (result) {
+              found = true
+              clearTimeout(timeoutId)
+              resolve(result.getText())
+            }
+            
+            // Ignorar errores de "no encontrado" (son normales mientras busca)
+            if (err && err.name !== 'NotFoundException') {
+              console.warn('Error escaneando:', err)
+            }
+          }
+        )
+      })
+
+      if (scannedCode) {
+        const product = productos.find(p => p.barcode === scannedCode || p.codigo_barras === scannedCode)
+        
+        if (product) {
+          addToCart(product)
+          Swal.fire({
+            title: '¡Producto agregado!',
+            text: product.nombre,
+            icon: 'success',
+            timer: 1500,
+            showConfirmButton: false
+          })
+        } else {
+          Swal.fire({
+            title: 'Código no encontrado',
+            text: `No se encontró un producto con el código: ${scannedCode}`,
+            icon: 'warning',
+            confirmButtonColor: '#dc2626'
+          })
+        }
       }
+      
     } catch (err) {
+      console.error('Error en escáner:', err)
+      
       if (!isCancelledRef.current) {
-        console.error('Error escaneando:', err)
+        let mensaje = 'Error al escanear. Intentá de nuevo.'
+        
+        if (err.name === 'NotAllowedError') {
+          mensaje = 'Permiso de cámara denegado. Permití el acceso en la barra de direcciones.'
+        } else if (err.name === 'NotFoundError') {
+          mensaje = 'No se encontró una cámara en tu dispositivo.'
+        } else if (err.name === 'NotReadableError') {
+          mensaje = 'La cámara ya está siendo usada por otra aplicación.'
+        } else if (err.message === 'Tiempo de escaneo agotado') {
+          mensaje = 'No se detectó ningún código en 30 segundos. Intentá de nuevo con buena luz.'
+        }
+        
         Swal.fire({
           title: 'Error al escanear',
-          text: 'No se detectó ningún código o hubo un error. Intentá de nuevo con buena luz.',
+          text: mensaje,
           icon: 'error',
           confirmButtonColor: '#dc2626'
         })
       }
     } finally {
       setIsScanning(false)
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop())
-        streamRef.current = null
+      
+      // Limpieza correcta
+      if (codeReaderRef.current) {
+        codeReaderRef.current.reset()
+        codeReaderRef.current = null
       }
     }
   }
@@ -209,9 +254,9 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
   const handleCloseScan = () => {
     isCancelledRef.current = true
     setIsScanning(false)
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop())
-      streamRef.current = null
+    if (codeReaderRef.current) {
+      codeReaderRef.current.reset()
+      codeReaderRef.current = null
     }
   }
 
@@ -326,6 +371,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
         </div>
       </div>
 
+      {/* Overlay de escaneo */}
       {isScanning && (
         <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4">
           <div className="relative w-full max-w-md">
