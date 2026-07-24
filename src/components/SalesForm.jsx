@@ -1,13 +1,18 @@
-import { useState, useEffect } from 'react'
-import { Search, Plus, Trash2, ShoppingCart, Minus } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Search, Plus, Trash2, ShoppingCart, Minus, X, Barcode } from 'lucide-react'
 import { updateProducto, createVenta, createDetalleVenta } from '../services/api'
 import Swal from 'sweetalert2'
+import { BrowserMultiFormatReader } from '@zxing/library'
 
-function SalesForm({ onSaleRecorded, productos }) {
+function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [filteredProducts, setFilteredProducts] = useState([])
-  const [cart, setCart] = useState([])
   const [isProcessing, setIsProcessing] = useState(false)
+  const [whatsappNumber, setWhatsappNumber] = useState('')
+  const [isScanning, setIsScanning] = useState(false)
+  
+  const streamRef = useRef(null)
+  const isCancelledRef = useRef(false)
 
   useEffect(() => {
     if (searchTerm.trim() === '') { setFilteredProducts([]); return }
@@ -21,12 +26,21 @@ function SalesForm({ onSaleRecorded, productos }) {
 
   const addToCart = (product) => {
     const existingItem = cart.find(item => item.id === product.id)
+    
     if (existingItem) {
       if (existingItem.quantity + 1 > product.stock) {
-        Swal.fire({ title: 'Stock insuficiente', text: `Solo quedan ${product.stock}.`, icon: 'warning', confirmButtonColor: '#dc2626' })
+        Swal.fire({
+          title: 'Stock insuficiente',
+          text: `No hay suficiente stock de ${product.nombre}. Solo quedan ${product.stock}.`,
+          icon: 'warning',
+          confirmButtonColor: '#dc2626',
+          confirmButtonText: 'Aceptar'
+        })
         return
       }
-      setCart(cart.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item))
+      setCart(cart.map(item => 
+        item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+      ))
     } else {
       setCart([...cart, { ...product, quantity: 1 }])
     }
@@ -63,21 +77,141 @@ function SalesForm({ onSaleRecorded, productos }) {
         await updateProducto(item.id, { stock: item.stock - item.quantity })
       }
 
-      await Swal.fire({
-        title: '¡Venta Registrada!',
-        html: `<div style="text-align: left; font-size: 1.1rem;">
-          <p style="margin: 10px 0;"><strong>Total:</strong> <span style="color: #16a34a; font-size: 1.5rem;">$${total.toFixed(2)}</span></p>
-          <p style="margin: 10px 0;"><strong>Productos:</strong> ${cart.length}</p>
-        </div>`,
-        icon: 'success', confirmButtonColor: '#16a34a', confirmButtonText: 'Aceptar',
-        timer: 3000, timerProgressBar: true,
-        willClose: () => { setCart([]); onSaleRecorded(); }
+      const fecha = new Date().toLocaleString('es-AR', { 
+        day: '2-digit', month: '2-digit', year: 'numeric', 
+        hour: '2-digit', minute: '2-digit' 
       })
+
+      let mensajeWhatsApp = `*COMPROBANTE DE VENTA* 🧾\n`
+      mensajeWhatsApp += `━━━━━━━━━━━━━━━━━━━━\n`
+      mensajeWhatsApp += `📅 ${fecha}\n`
+      mensajeWhatsApp += ` Venta #${ventaId}\n`
+      mensajeWhatsApp += `━━━━━━━━━━━━━━━━━━━━\n\n`
+      mensajeWhatsApp += `*PRODUCTOS:*\n`
+      cart.forEach(item => {
+        const subtotal = (item.precio * item.quantity).toFixed(2)
+        mensajeWhatsApp += `${item.quantity}x ${item.nombre}\n`
+        mensajeWhatsApp += `   $${subtotal}\n`
+      })
+      mensajeWhatsApp += `\n━━━━━━━━━━━━━━━━━━━━\n`
+      mensajeWhatsApp += `*TOTAL: $${total.toFixed(2)}*\n`
+      mensajeWhatsApp += `━━━━━━━━━━━━━━━━━━━━\n\n`
+      mensajeWhatsApp += `¡Gracias por su compra! 🙌`
+
+      const mensajeCodificado = encodeURIComponent(mensajeWhatsApp)
+
+      const result = await Swal.fire({
+        title: '¡Venta Registrada! ✅',
+        html: `
+          <div style="text-align: left; font-size: 1rem;">
+            <p style="margin: 10px 0;"><strong>Total:</strong> <span style="color: #16a34a; font-size: 1.5rem; font-weight: bold;">$${total.toFixed(2)}</span></p>
+            <p style="margin: 10px 0;"><strong>Productos:</strong> ${cart.length}</p>
+            <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;" />
+            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">📱 Enviar comprobante por WhatsApp:</label>
+            <input 
+              id="swal-whatsapp-input" 
+              type="text" 
+              placeholder="Ej: 5491123456789" 
+              style="width: 100%; padding: 12px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 16px;"
+              value="${whatsappNumber}"
+            />
+          </div>
+        `,
+        icon: 'success',
+        showCancelButton: true,
+        confirmButtonColor: '#25D366',
+        cancelButtonColor: '#6b7280',
+        confirmButtonText: 'Enviar por WhatsApp',
+        cancelButtonText: 'Solo cerrar',
+        focusConfirm: false,
+        didOpen: () => {
+          const input = document.getElementById('swal-whatsapp-input')
+          if (input) input.focus()
+        },
+        preConfirm: () => {
+          const numero = document.getElementById('swal-whatsapp-input').value
+          setWhatsappNumber(numero)
+          return numero
+        }
+      })
+
+      if (result.isConfirmed && result.value) {
+        const url = `https://wa.me/${result.value}?text=${mensajeCodificado}`
+        window.open(url, '_blank')
+      }
+      
+      setCart([])
+      onSaleRecorded()
+
     } catch (err) {
       console.error(err)
       Swal.fire({ title: 'Error', text: 'Error al procesar la venta.', icon: 'error', confirmButtonColor: '#dc2626' })
     } finally {
       setIsProcessing(false)
+    }
+  }
+
+  const handleScan = async () => {
+    setIsScanning(true)
+    isCancelledRef.current = false
+    
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: 'environment' } 
+      })
+      streamRef.current = stream
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      const codeReader = new BrowserMultiFormatReader()
+      const result = await codeReader.decodeFromStream(stream, 'video')
+      
+      if (isCancelledRef.current) return
+
+      const barcode = result.getText()
+      const product = productos.find(p => p.barcode === barcode || p.codigo_barras === barcode)
+      
+      if (product) {
+        addToCart(product)
+        Swal.fire({
+          title: '¡Producto agregado!',
+          text: product.nombre,
+          icon: 'success',
+          timer: 1500,
+          showConfirmButton: false
+        })
+      } else {
+        Swal.fire({
+          title: 'Código no encontrado',
+          text: `No se encontró un producto con el código: ${barcode}`,
+          icon: 'warning',
+          confirmButtonColor: '#dc2626'
+        })
+      }
+    } catch (err) {
+      if (!isCancelledRef.current) {
+        console.error('Error escaneando:', err)
+        Swal.fire({
+          title: 'Error al escanear',
+          text: 'No se detectó ningún código o hubo un error. Intentá de nuevo con buena luz.',
+          icon: 'error',
+          confirmButtonColor: '#dc2626'
+        })
+      }
+    } finally {
+      setIsScanning(false)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
+    }
+  }
+
+  const handleCloseScan = () => {
+    isCancelledRef.current = true
+    setIsScanning(false)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
     }
   }
 
@@ -91,31 +225,49 @@ function SalesForm({ onSaleRecorded, productos }) {
         {/* COLUMNA IZQUIERDA */}
         <div>
           <h3 className="text-xl font-bold text-gray-700 mb-3">1. Buscar Producto</h3>
+          
           <div className="relative mb-4">
-  <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-gray-400" />
-  <input
-    type="text"
-    placeholder="Escribí nombre, color, talle o categoría..."
-    value={searchTerm}
-    onChange={(e) => setSearchTerm(e.target.value)}
-    className="w-full pl-12 pr-4 py-4 border-2 border-gray-300 rounded-xl text-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
-  />
-</div>
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Escribí nombre, color, talle o categoría..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-12 pr-14 py-4 border-2 border-gray-300 rounded-xl text-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            />
+            <button
+              onClick={handleScan}
+              className="absolute right-3 top-1/2 -translate-y-1/2 bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 transition shadow-md"
+              title="Escanear código de barras"
+            >
+              <Barcode className="w-5 h-5" />
+            </button>
+          </div>
 
           {filteredProducts.length > 0 && (
             <div className="bg-gray-50 border-2 border-gray-200 rounded-xl max-h-96 overflow-y-auto">
               {filteredProducts.map(product => (
-                <div key={product.id} className="flex justify-between items-center p-4 border-b border-gray-200 hover:bg-white transition">
-                  <div>
+                <div 
+                  key={product.id} 
+                  onClick={() => product.stock > 0 && addToCart(product)}
+                  className={`flex justify-between items-center p-4 border-b border-gray-200 transition cursor-pointer ${
+                    product.stock <= 0 ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-50 active:bg-blue-100'
+                  }`}
+                >
+                  <div className="flex-1">
                     <p className="font-bold text-lg text-gray-800">{product.nombre}</p>
-                    <p className="text-gray-600 text-base">{product.categoria} | Talle: {product.talle || 'N/A'} | Stock: <span className="font-bold text-green-700">{product.stock}</span></p>
+                    <p className="text-gray-600 text-base">
+                      {product.categoria} | Talle: {product.talle || 'N/A'} | Color: {product.color || 'N/A'}
+                    </p>
+                    <p className="text-green-700 font-bold text-base">
+                      Stock: {product.stock} | Precio: ${Number(product.precio).toFixed(2)}
+                    </p>
                   </div>
-                  <button
-                    onClick={() => addToCart(product)} disabled={product.stock <= 0}
-                    className={`btn touch-target ${product.stock <= 0 ? 'btn-secondary' : 'btn-primary'}`}
-                  >
-                    <Plus className="w-5 h-5" /> Agregar
-                  </button>
+                  {product.stock > 0 && (
+                    <div className="bg-blue-600 text-white rounded-full w-10 h-10 flex items-center justify-center ml-3">
+                      <Plus className="w-6 h-6" />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -130,6 +282,7 @@ function SalesForm({ onSaleRecorded, productos }) {
             <div className="flex-1 flex flex-col items-center justify-center text-gray-400 py-8">
               <ShoppingCart className="w-16 h-16 mb-2 opacity-50" />
               <p className="text-lg">El carrito está vacío</p>
+              <p className="text-sm mt-2">Tocá "Vender" en un producto para agregarlo</p>
             </div>
           ) : (
             <>
@@ -172,6 +325,36 @@ function SalesForm({ onSaleRecorded, productos }) {
           )}
         </div>
       </div>
+
+      {isScanning && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4">
+          <div className="relative w-full max-w-md">
+            <div className="relative w-full h-80 bg-black rounded-2xl overflow-hidden border-4 border-green-500 shadow-2xl">
+              <video 
+                id="video" 
+                className="w-full h-full object-cover"
+                autoPlay 
+                playsInline 
+              />
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse" />
+              </div>
+            </div>
+            
+            <div className="mt-6 text-center">
+              <h3 className="text-xl font-bold text-white mb-2">Escaneá el código de barras</h3>
+              <p className="text-gray-300 mb-6 text-sm">Apunta la cámara al código. Asegurate de tener buena luz.</p>
+              
+              <button
+                onClick={handleCloseScan}
+                className="btn btn-danger w-full"
+              >
+                <X className="w-5 h-5" /> Cancelar escaneo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

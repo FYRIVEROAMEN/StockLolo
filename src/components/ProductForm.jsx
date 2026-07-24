@@ -1,10 +1,28 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getProductoById, createProducto, updateProducto } from '../services/api'
 import Swal from 'sweetalert2'
+import { Barcode, X } from 'lucide-react'
+import { BrowserMultiFormatReader } from '@zxing/library'
 
 function ProductForm({ onClose, editId, onSave }) {
-  const [form, setForm] = useState({ nombre: '', categoria: '', talle: '', color: '', precio: '', stock: '' })
+  const [form, setForm] = useState({
+    nombre: '',
+    categoria: '',
+    talle: '',
+    color: '',
+    precio: '',
+    stock: '',
+    barcode: ''
+  })
   const [saving, setSaving] = useState(false)
+  const [imagenFile, setImagenFile] = useState(null)
+  const [imagenPreview, setImagenPreview] = useState(null)
+  const [imagenURL, setImagenURL] = useState('')
+
+  // Estados para el escáner de código de barras
+  const [isScanning, setIsScanning] = useState(false)
+  const streamRef = useRef(null)
+  const isCancelledRef = useRef(false)
 
   useEffect(() => {
     if (editId) {
@@ -12,26 +30,121 @@ function ProductForm({ onClose, editId, onSave }) {
         if (data && data[0]) {
           const p = data[0]
           setForm({
-            nombre: p.nombre || '', categoria: p.categoria || '', talle: p.talle || '',
-            color: p.color || '', precio: String(p.precio || ''), stock: String(p.stock || '')
+            nombre: p.nombre || '',
+            categoria: p.categoria || '',
+            talle: p.talle || '',
+            color: p.color || '',
+            precio: String(p.precio || ''),
+            stock: String(p.stock || ''),
+            barcode: p.barcode || ''
           })
+          if (p.imagen_url) {
+            setImagenURL(p.imagen_url)
+            setImagenPreview(p.imagen_url)
+          }
         }
       })
     }
   }, [editId])
 
+  const subirImagenCloudinary = async (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('upload_preset', import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET)
+    const cloudName = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
+
+    try {
+      const response = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+        method: 'POST',
+        body: formData
+      })
+      const data = await response.json()
+      return data.secure_url
+    } catch (error) {
+      console.error('Error subiendo imagen:', error)
+      return null
+    }
+  }
+
+  // 👇 LÓGICA DE ESCANEO DE CÓDIGO DE BARRAS
+  const handleScanBarcode = async () => {
+    setIsScanning(true)
+    isCancelledRef.current = false
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' }
+      })
+      streamRef.current = stream
+      await new Promise(resolve => setTimeout(resolve, 300))
+
+      const codeReader = new BrowserMultiFormatReader()
+      const result = await codeReader.decodeFromStream(stream, 'video-producto')
+
+      if (isCancelledRef.current) return
+
+      const barcode = result.getText()
+      setForm({ ...form, barcode })
+
+      Swal.fire({
+        title: '¡Código detectado!',
+        text: barcode,
+        icon: 'success',
+        timer: 1500,
+        showConfirmButton: false
+      })
+    } catch (err) {
+      if (!isCancelledRef.current) {
+        Swal.fire({
+          title: 'Error al escanear',
+          text: 'No se detectó ningún código. Intentá de nuevo con buena luz.',
+          icon: 'error',
+          confirmButtonColor: '#dc2626'
+        })
+      }
+    } finally {
+      setIsScanning(false)
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop())
+        streamRef.current = null
+      }
+    }
+  }
+
+  const handleCloseScan = () => {
+    isCancelledRef.current = true
+    setIsScanning(false)
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop())
+      streamRef.current = null
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setSaving(true)
+
+    let imagenFinal = imagenURL
+    if (imagenFile) {
+      const urlSubida = await subirImagenCloudinary(imagenFile)
+      if (urlSubida) imagenFinal = urlSubida
+    }
+
     const payload = {
-      nombre: form.nombre, categoria: form.categoria, talle: form.talle, color: form.color,
-      precio: parseFloat(form.precio) || 0, stock: parseInt(form.stock) || 0
+      nombre: form.nombre,
+      categoria: form.categoria,
+      talle: form.talle,
+      color: form.color,
+      barcode: form.barcode,
+      precio: parseFloat(form.precio) || 0,
+      stock: parseInt(form.stock) || 0,
+      imagen_url: imagenFinal
     }
 
     try {
       if (editId) await updateProducto(editId, payload)
       else await createProducto(payload)
-      
+
       Swal.fire({
         title: editId ? '¡Actualizado!' : '¡Agregado!',
         text: `El producto fue ${editId ? 'actualizado' : 'agregado'} correctamente.`,
@@ -59,6 +172,28 @@ function ProductForm({ onClose, editId, onSave }) {
             <label className="block text-base font-bold text-gray-700 mb-2">Categoría</label>
             <input value={form.categoria} onChange={e => setForm({...form, categoria: e.target.value})} className="input-lg" placeholder="Ej: Remeras, Pantalones" />
           </div>
+
+          {/* 👇 CAMPO CÓDIGO DE BARRAS CON BOTÓN DE ESCANEO */}
+          <div>
+            <label className="block text-base font-bold text-gray-700 mb-2">Código de Barras</label>
+            <div className="relative">
+              <input
+                value={form.barcode}
+                onChange={e => setForm({...form, barcode: e.target.value})}
+                className="input-lg pr-14"
+                placeholder="Ej: 7791234567890"
+              />
+              <button
+                type="button"
+                onClick={handleScanBarcode}
+                className="absolute right-3 top-1/2 -translate-y-1/2 bg-green-600 text-white rounded-full w-10 h-10 flex items-center justify-center hover:bg-green-700 transition shadow-md"
+                title="Escanear código de barras"
+              >
+                <Barcode className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-base font-bold text-gray-700 mb-2">Talle</label>
@@ -79,12 +214,68 @@ function ProductForm({ onClose, editId, onSave }) {
               <input required type="number" value={form.stock} onChange={e => setForm({...form, stock: e.target.value})} className="input-lg" placeholder="0" />
             </div>
           </div>
+
+          <div className="space-y-4">
+            <label className="block text-base font-bold text-gray-700 mb-2">Imagen del Producto</label>
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files[0]
+                if (file) {
+                  setImagenFile(file)
+                  setImagenPreview(URL.createObjectURL(file))
+                }
+              }}
+              className="input-lg"
+              style={{ padding: '10px', height: 'auto' }}
+            />
+            {imagenPreview && (
+              <img
+                src={imagenPreview}
+                alt="Vista previa"
+                style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '8px', marginTop: '10px', border: '1px solid #ddd' }}
+              />
+            )}
+          </div>
+
           <div className="flex gap-4 pt-4">
             <button type="button" onClick={onClose} className="btn btn-secondary" style={{ flex: 1 }}>Cancelar</button>
             <button type="submit" disabled={saving} className="btn btn-primary" style={{ flex: 1 }}>{saving ? 'Guardando...' : 'Guardar'}</button>
           </div>
         </form>
       </div>
+
+      {/* 👇 OVERLAY DEL ESCÁNER */}
+      {isScanning && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-[60] p-4">
+          <div className="relative w-full max-w-md">
+            <div className="relative w-full h-80 bg-black rounded-2xl overflow-hidden border-4 border-green-500 shadow-2xl">
+              <video
+                id="video-producto"
+                className="w-full h-full object-cover"
+                autoPlay
+                playsInline
+              />
+              <div className="absolute inset-0 pointer-events-none">
+                <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse" />
+              </div>
+            </div>
+
+            <div className="mt-6 text-center">
+              <h3 className="text-xl font-bold text-white mb-2">Escaneá el código de barras</h3>
+              <p className="text-gray-300 mb-6 text-sm">Apunta la cámara al código del producto.</p>
+
+              <button
+                onClick={handleCloseScan}
+                className="btn btn-danger w-full"
+              >
+                <X className="w-5 h-5" /> Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
