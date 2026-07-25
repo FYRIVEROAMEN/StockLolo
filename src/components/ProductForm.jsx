@@ -46,6 +46,9 @@ function ProductForm({ onClose, editId, onSave }) {
     }
   }, [editId])
 
+
+ 
+
   const subirImagenCloudinary = async (file) => {
     let fileToUpload = file
     
