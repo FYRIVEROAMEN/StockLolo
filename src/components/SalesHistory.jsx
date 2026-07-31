@@ -1,22 +1,37 @@
 import { useState, useEffect } from 'react'
-import { Download, Trash2, Calendar, Filter, Eye, X } from 'lucide-react'
-import { getVentas, deleteDetalleVenta, deleteVenta } from '../services/api'
-import { createClient } from '@supabase/supabase-js'
+import { getVentas, deleteVenta } from '../services/api'
+import { Download, Trash2, Filter, User, Package } from 'lucide-react'
 import Swal from 'sweetalert2'
 
-
-// Cliente de Supabase para consultas directas con join
-const supabase = createClient(
-  'https://izxtbndkcjxubvnisygh.supabase.co',
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml6eHRibmRrY2p4dWJ2bmlzeWdoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQ2NTA3NDksImV4cCI6MjEwMDIyNjc0OX0.d-lkbzrINaZMFTRd4Yf34VHiNKcJgNUex9amF0gHknc'
-)
+// ====================================================================
+// FUNCIÓN UTILITARIA: Formatea teléfonos argentinos para WhatsApp
+// ====================================================================
+const formatWhatsAppNumber = (phone) => {
+  if (!phone) return ''
+  let clean = phone.replace(/\D/g, '') 
+  
+  if (clean.startsWith('549')) return clean 
+  if (clean.startsWith('0')) clean = clean.slice(1) 
+  if (clean.startsWith('9')) clean = clean.slice(1) 
+  
+  if (clean.startsWith('15')) {
+    clean = '11' + clean 
+  }
+  
+  clean = clean.replace(/^(11|2\d{2}|3\d{2})15/, '$1')
+  
+  return `549${clean}`
+}
 
 function SalesHistory() {
   const [ventas, setVentas] = useState([])
   const [loading, setLoading] = useState(true)
-  const [filterPeriod, setFilterPeriod] = useState('all')
-  const [selectedVenta, setSelectedVenta] = useState(null)
+  const [filtro, setFiltro] = useState('todas')
   const [showDetail, setShowDetail] = useState(false)
+  const [selectedVenta, setSelectedVenta] = useState(null)
+  
+  const [selectedVentas, setSelectedVentas] = useState([])
+  const [selectAll, setSelectAll] = useState(false)
 
   useEffect(() => {
     fetchVentas()
@@ -25,388 +40,459 @@ function SalesHistory() {
   const fetchVentas = async () => {
     setLoading(true)
     try {
-      // 1. Obtener todas las ventas
-      const { data: ventasData, error: ventasError } = await supabase
-        .from('ventas')
-        .select('*')
-        .order('fecha', { ascending: false })
-      
-      if (ventasError) throw new Error(ventasError.message)
-      
-      // 2. Para cada venta, obtener su detalle con join a productos
-      const ventasConDetalle = await Promise.all(
-        (ventasData || []).map(async (venta) => {
-          const { data: detalle, error: detalleError } = await supabase
-            .from('detalle_ventas')
-            .select(`
-              id,
-              cantidad,
-              precio_unitario,
-              producto_id,
-              productos!producto_id (
-                nombre,
-                talle,
-                color
-              )
-            `)
-            .eq('venta_id', venta.id)
-          
-          if (detalleError) {
-            console.error('Error cargando detalle:', detalleError)
-            return { ...venta, detalle: [] }
-          }
-          
-          return { ...venta, detalle: detalle || [] }
-        })
-      )
-      
-      setVentas(ventasConDetalle)
+      const { data: ventasData } = await getVentas()
+      const ventasAdaptadas = (ventasData || []).map(venta => {
+        const pagos = venta.pagos || []
+        const totalPagado = pagos.reduce((sum, p) => sum + Number(p.monto || 0), 0)
+        // ✅ USAR total_neto (con fallback a total_bruto por si hay datos viejos)
+        const totalVenta = Number(venta.total_neto || venta.total_bruto || 0)
+        const totalPendiente = totalVenta - totalPagado
+        
+        return {
+          ...venta,
+          detalle: venta.detalle_ventas || [],
+          cliente_nombre: venta.clientes?.nombre || null,
+          cliente_telefono: venta.clientes?.telefono || null,
+          total_pagado: totalPagado,
+          total_pendiente: totalPendiente
+        }
+      })
+      setVentas(ventasAdaptadas)
     } catch (err) {
       console.error('Error al cargar ventas:', err)
     }
     setLoading(false)
   }
 
-  const filteredVentas = ventas.filter(venta => {
-    const ventaDate = new Date(venta.fecha)
-    const now = new Date()
-    const diffDays = (now - ventaDate) / (1000 * 60 * 60 * 24)
-
-    if (filterPeriod === 'today') return diffDays < 1
-    if (filterPeriod === 'week') return diffDays <= 7
-    if (filterPeriod === 'month') return diffDays <= 30
-    return true
-  })
-
-  // ✅ CSV CORREGIDO: cada campo entre comillas para evitar roturas
-  const exportToCSV = () => {
-    const headers = ['ID Venta', 'Fecha', 'Producto', 'Talle', 'Color', 'Cantidad', 'Precio Unitario', 'Subtotal']
-    const rows = []
-
-    filteredVentas.forEach(venta => {
-      const fechaFormateada = new Date(venta.fecha).toLocaleString('es-AR', {
-        day: '2-digit', month: '2-digit', year: 'numeric',
-        hour: '2-digit', minute: '2-digit'
-      })
-      
-      if (venta.detalle && venta.detalle.length > 0) {
-        venta.detalle.forEach(item => {
-          const nombreProducto = item.productos?.nombre || 'Producto eliminado'
-          const talle = item.productos?.talle || '-'
-          const color = item.productos?.color || '-'
-          const subtotal = (item.cantidad * item.precio_unitario).toFixed(2)
-          
-          rows.push([
-            venta.id,
-            fechaFormateada,
-            nombreProducto,
-            talle,
-            color,
-            item.cantidad,
-            `$${Number(item.precio_unitario).toFixed(2)}`,
-            `$${subtotal}`
-          ])
-        })
-      } else {
-        rows.push([
-          venta.id,
-          fechaFormateada,
-          'Sin detalle',
-          '-',
-          '-',
-          0,
-          '-',
-          `$${Number(venta.total).toFixed(2)}`
-        ])
-      }
+  const handleDelete = async (ventaId) => {
+    const result = await Swal.fire({
+      title: '¿Eliminar esta venta?',
+      text: 'Esta acción no se puede deshacer.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Sí, eliminar',
+      cancelButtonText: 'Cancelar'
     })
 
-    // ✅ Cada fila envuelta en comillas dobles para evitar problemas con comas
-    const csvContent = [
-      headers.join(','),
-      ...rows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n')
+    if (result.isConfirmed) {
+      try {
+        await deleteVenta(ventaId)
+        Swal.fire({ title: 'Venta eliminada', icon: 'success', timer: 1500 })
+        fetchVentas()
+      } catch (err) {
+        Swal.fire({ title: 'Error', text: err.message, icon: 'error' })
+      }
+    }
+  }
 
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const handleShowDetail = async (venta) => {
+    setSelectedVenta(venta)
+    setShowDetail(true)
+  }
+
+  const handleWhatsApp = (venta) => {
+    if (!venta.cliente_telefono) {
+      Swal.fire({ title: 'Sin teléfono', text: 'Este cliente no tiene teléfono registrado', icon: 'warning' })
+      return
+    }
+
+    const fecha = new Date(venta.fecha).toLocaleString('es-AR')
+    // ✅ FIX NaN: Usar total_neto
+    const montoTotal = Number(venta.total_neto || venta.total_bruto || 0)
+    
+    let mensaje = `*COMPROBANTE DE VENTA* \n`
+    mensaje += `━━━━━━━━━━━━━━━━━━━━\n`
+    mensaje += ` ${fecha}\n`
+    mensaje += ` Venta #${venta.id}\n`
+    mensaje += `━━━━━━━━━━━━━━━━━━━━\n\n`
+    mensaje += `*PRODUCTOS:*\n`
+    
+    if (venta.detalle && venta.detalle.length > 0) {
+      venta.detalle.forEach(item => {
+        const subtotal = (item.cantidad * item.precio_unitario).toFixed(2)
+        mensaje += `${item.cantidad}x ${item.productos?.nombre || 'Producto eliminado'}\n`
+        mensaje += `   $${subtotal}\n`
+      })
+    }
+    
+    mensaje += `\n━━━━━━━━━━━━━━━━━━━━\n`
+    mensaje += `*TOTAL: $${montoTotal.toFixed(2)}*\n`
+    
+    if (venta.estado_pago === 'parcial') {
+      mensaje += `*Pagado: $${Number(venta.total_pagado || 0).toFixed(2)}*\n`
+      mensaje += `*Pendiente: $${Number(venta.total_pendiente || 0).toFixed(2)}*\n`
+    }
+    
+    mensaje += `━━━━━━━━━━━━━━━━━━━━\n\n`
+    mensaje += `¡Gracias por tu compra! `
+    
+    const url = `https://wa.me/${formatWhatsAppNumber(venta.cliente_telefono)}?text=${encodeURIComponent(mensaje)}`
+    window.open(url, '_blank')
+  }
+
+  const exportarVentasCSV = () => {
+    const headers = ['ID Venta', 'Fecha', 'Cliente', 'Teléfono', 'Total Neto', 'Estado Pago', 'Pagado', 'Pendiente']
+    const rows = ventasFiltradas.map(v => {
+      // ✅ FIX NaN: Usar total_neto
+      const totalNeto = Number(v.total_neto || v.total_bruto || 0)
+      return [
+        v.id,
+        new Date(v.fecha).toLocaleString('es-AR'),
+        v.cliente_nombre || 'Sin nombre',
+        v.cliente_telefono || 'Sin teléfono',
+        totalNeto.toFixed(2),
+        v.estado_pago || 'pagado',
+        Number(v.total_pagado || 0).toFixed(2),
+        Number(v.total_pendiente || 0).toFixed(2)
+      ].map(cell => `"${cell}"`).join(',')
+    })
+
+    const csvContent = [headers.join(','), ...rows].join('\n')
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
     const link = document.createElement('a')
-    const url = URL.createObjectURL(blob)
-    link.setAttribute('href', url)
-    link.setAttribute('download', `ventas_${new Date().toISOString().split('T')[0]}.csv`)
+    link.href = URL.createObjectURL(blob)
+    link.download = `ventas_${new Date().toISOString().split('T')[0]}.csv`
     link.click()
   }
 
-  const deleteOldVentas = async (days) => {
+  const toggleSelectVenta = (ventaId, estadoPago) => {
+    if (estadoPago !== 'pagado') {
+      Swal.fire({
+        title: 'No se puede seleccionar',
+        text: 'Solo se pueden eliminar ventas completamente pagadas',
+        icon: 'warning',
+        timer: 2000
+      })
+      return
+    }
+    
+    setSelectedVentas(prev => 
+      prev.includes(ventaId) 
+        ? prev.filter(id => id !== ventaId)
+        : [...prev, ventaId]
+    )
+  }
+
+  const toggleSelectAll = () => {
+    if (selectAll) {
+      setSelectedVentas([])
+    } else {
+      const ventasPagadas = ventasFiltradas
+        .filter(v => v.estado_pago === 'pagado')
+        .map(v => v.id)
+      setSelectedVentas(ventasPagadas)
+    }
+    setSelectAll(!selectAll)
+  }
+
+  const eliminarSeleccionadas = async () => {
+    if (selectedVentas.length === 0) {
+      Swal.fire({
+        title: 'No hay ventas seleccionadas',
+        text: 'Seleccioná al menos una venta para eliminar',
+        icon: 'warning'
+      })
+      return
+    }
+
     const result = await Swal.fire({
-      title: '¿Estás seguro?',
-      html: `Se eliminarán todas las ventas de hace más de <strong>${days} días</strong>.<br><br><span style="color: #dc2626; font-weight: bold;">Esta acción no se puede deshacer.</span>`,
+      title: `¿Eliminar ${selectedVentas.length} venta(s)?`,
+      html: `
+        <div style="text-align: left;">
+          <p style="margin-bottom: 10px;">Se eliminarán permanentemente:</p>
+          <ul style="margin-left: 20px; margin-bottom: 15px;">
+            <li>${selectedVentas.length} venta(s) seleccionada(s)</li>
+            <li>Sus productos/detalles asociados</li>
+          </ul>
+          <p style="color: #dc2626; font-weight: bold;">⚠️ Esta acción no se puede deshacer</p>
+        </div>
+      `,
       icon: 'warning',
       showCancelButton: true,
-      confirmButtonColor: '#dc2626',
-      cancelButtonColor: '#6b7280',
-      confirmButtonText: 'Sí, eliminar',
-      cancelButtonText: 'Cancelar'
+      confirmButtonText: 'Sí, eliminar seleccionadas',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#dc2626'
     })
 
-    if (!result.isConfirmed) return
-
-    try {
-      const cutoffDate = new Date()
-      cutoffDate.setDate(cutoffDate.getDate() - days)
-      
-      const ventasAEliminar = ventas.filter(v => {
-        const ventaDate = new Date(v.fecha)
-        return ventaDate < cutoffDate
-      })
-
-      for (const venta of ventasAEliminar) {
-        await deleteDetalleVenta(venta.id)
-        await deleteVenta(venta.id)
+    if (result.isConfirmed) {
+      try {
+        for (const ventaId of selectedVentas) {
+          await deleteVenta(ventaId)
+        }
+        
+        Swal.fire({
+          title: 'Eliminadas',
+          text: `Se eliminaron ${selectedVentas.length} ventas`,
+          icon: 'success',
+          timer: 2000
+        })
+        
+        setSelectedVentas([])
+        setSelectAll(false)
+        fetchVentas()
+      } catch (err) {
+        Swal.fire('Error', err.message, 'error')
       }
-
-      await fetchVentas()
-      
-      await Swal.fire({
-        title: '¡Éxito!',
-        text: `Se eliminaron ${ventasAEliminar.length} ventas antiguas`,
-        icon: 'success',
-        confirmButtonColor: '#16a34a',
-        timer: 2000,
-        timerProgressBar: true
-      })
-    } catch (err) {
-      console.error('Error al eliminar:', err)
-      await Swal.fire({
-        title: 'Error',
-        text: 'Error al eliminar las ventas',
-        icon: 'error',
-        confirmButtonColor: '#dc2626'
-      })
     }
   }
 
-  const deleteSingleVenta = async (id) => {
-    const result = await Swal.fire({
-      title: '¿Eliminar esta venta?',
-      text: 'Esta acción no se puede deshacer. La venta desaparecerá del historial.',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#dc2626',
-      cancelButtonColor: '#6b7280',
-      confirmButtonText: 'Sí, eliminar',
-      cancelButtonText: 'Cancelar'
-    })
+  const ventasFiltradas = ventas.filter(v => {
+    if (filtro === 'todas') return true
+    if (filtro === 'pagadas') return v.estado_pago === 'pagado'
+    if (filtro === 'parciales') return v.estado_pago === 'parcial'
+    if (filtro === 'pendientes') return v.estado_pago === 'pendiente'
+    return true
+  })
 
-    if (!result.isConfirmed) return
+  const totalVentas = ventasFiltradas.reduce((sum, v) => {
+    // ✅ FIX NaN: Usar total_neto
+    const monto = Number(v.total_neto || v.total_bruto || 0)
+    return sum + monto
+  }, 0)
 
-    try {
-      await deleteDetalleVenta(id)
-      await deleteVenta(id)
-      await fetchVentas()
-      
-      await Swal.fire({
-        title: '¡Eliminada!',
-        text: 'La venta fue eliminada correctamente',
-        icon: 'success',
-        confirmButtonColor: '#16a34a',
-        timer: 2000,
-        timerProgressBar: true
-      })
-    } catch (err) {
-      console.error('Error al eliminar:', err)
-      await Swal.fire({
-        title: 'Error',
-        text: 'Error al eliminar la venta',
-        icon: 'error',
-        confirmButtonColor: '#dc2626'
-      })
+  const getEstadoBadge = (estado) => {
+    switch (estado) {
+      case 'pagado':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Pagado</span>
+      case 'parcial':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">Parcial</span>
+      case 'pendiente':
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Pendiente</span>
+      default:
+        return <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">Pagado</span>
     }
   }
-
-  const totalVentas = filteredVentas.reduce((sum, v) => sum + (v.total || 0), 0)
 
   return (
-    <div className="bg-white p-4 sm:p-8 rounded-xl shadow-sm border border-gray-200">
-      <h2 className="text-2xl sm:text-3xl font-bold mb-6 text-gray-800 flex items-center gap-3">
-         Historial de Ventas
-      </h2>
+    <div className="bg-white p-4 sm:p-8 rounded-xl shadow-sm border border-gray-200 max-w-5xl mx-auto">
+      <h2 className="text-2xl sm:text-3xl font-bold mb-6 text-gray-800">Historial de Ventas</h2>
 
+      {/* Controles */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <Filter className="w-5 h-5 text-gray-600" />
+        <div className="flex items-center gap-2">
+          <Filter className="w-5 h-5 text-gray-500" />
           <select
-            value={filterPeriod}
-            onChange={(e) => setFilterPeriod(e.target.value)}
-            className="input-lg"
-            style={{ height: '48px' }}
+            value={filtro}
+            onChange={(e) => { setFiltro(e.target.value); setSelectedVentas([]); setSelectAll(false); }}
+            className="border-2 border-gray-300 rounded-lg px-4 py-2 text-base focus:outline-none focus:ring-2 focus:ring-blue-500"
           >
-            <option value="all">Todas las ventas</option>
-            <option value="today">Hoy</option>
-            <option value="week">Últimos 7 días</option>
-            <option value="month">Últimos 30 días</option>
+            <option value="todas">Todas las ventas</option>
+            <option value="pagadas">Pagadas</option>
+            <option value="parciales">Pago parcial</option>
+            <option value="pendientes">Pendientes</option>
           </select>
         </div>
 
-        <div className="flex gap-3 w-full sm:w-auto">
-          <button
-            onClick={exportToCSV}
-            className="btn btn-success"
-            style={{ flex: 1 }}
-          >
-            <Download className="w-5 h-5" /> Exportar
+        <div className="flex gap-2">
+          <button onClick={exportarVentasCSV} className="btn btn-success flex items-center gap-2">
+            <Download className="w-4 h-4" /> Exportar
           </button>
-          <button
-            onClick={() => deleteOldVentas(90)}
-            className="btn btn-danger"
-            style={{ flex: 1 }}
-          >
-            <Trash2 className="w-5 h-5" /> Limpiar (&gt;90d)
-          </button>
+          
+          {selectedVentas.length > 0 && (
+            <button 
+              onClick={eliminarSeleccionadas} 
+              className="btn btn-danger flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" /> Eliminar ({selectedVentas.length})
+            </button>
+          )}
         </div>
       </div>
 
-      <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-xl mb-6 text-center sm:text-left">
+      {/* Mostrar contador de seleccionadas */}
+      {selectedVentas.length > 0 && (
+        <div className="bg-blue-50 border-2 border-blue-200 p-3 rounded-lg mb-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              checked={selectAll}
+              onChange={toggleSelectAll}
+              className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <p className="text-blue-700 font-semibold">
+              {selectedVentas.length} venta(s) seleccionada(s)
+            </p>
+          </div>
+          <button 
+            onClick={() => { setSelectedVentas([]); setSelectAll(false); }}
+            className="text-blue-600 hover:text-blue-800 text-sm font-medium"
+          >
+            Deseleccionar todo
+          </button>
+        </div>
+      )}
+
+      {/* Resumen */}
+      <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-xl mb-6">
         <p className="text-lg text-gray-700">Total de ventas en el período:</p>
-        <p className="text-3xl font-bold text-blue-700">${totalVentas.toFixed(2)}</p>
-        <p className="text-base text-gray-600 mt-1">{filteredVentas.length} transacciones</p>
+        <p className="text-lg sm:text-2xl font-bold text-green-700">${Number(totalVentas).toFixed(2)}</p>
+        <p className="text-base text-gray-600 mt-1">{ventasFiltradas.length} transacción(es)</p>
       </div>
 
       {loading ? (
-        <div className="text-center py-8 text-gray-500 text-xl">Cargando historial...</div>
-      ) : filteredVentas.length === 0 ? (
-        <div className="text-center py-8 text-gray-500 text-xl">No hay ventas en este período</div>
+        <div className="text-center py-8 text-gray-500">Cargando...</div>
+      ) : ventasFiltradas.length === 0 ? (
+        <div className="text-center py-8 text-gray-500">
+          <p className="text-xl">No hay ventas en este período</p>
+        </div>
       ) : (
-        <div className="space-y-4 max-h-[600px] overflow-y-auto pr-2">
-          {filteredVentas.map(venta => (
-            <div key={venta.id} className="border-2 border-gray-200 rounded-xl p-4 hover:border-blue-300 transition bg-white">
-              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div>
-                  <p className="text-lg font-bold text-gray-800">Venta #{venta.id}</p>
-                  <p className="text-gray-600 flex items-center gap-2 mt-1">
-                    <Calendar className="w-4 h-4" />
-                    {new Date(venta.fecha).toLocaleString('es-AR', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </p>
-                  {/* ✅ Mostrar cantidad de productos */}
-                  <p className="text-sm text-gray-500 mt-1">
-                    {venta.detalle?.length || 0} producto(s)
-                  </p>
-                </div>
-                <div className="text-left sm:text-right w-full sm:w-auto">
-                  <p className="text-2xl font-bold text-green-700">${Number(venta.total).toFixed(2)}</p>
-                  <div className="flex items-center gap-2 mt-2 justify-start sm:justify-end">
-                    <button
-                      onClick={() => deleteSingleVenta(venta.id)}
-                      className="btn btn-danger"
-                      style={{ minHeight: '40px', padding: '0 12px', fontSize: '14px' }}
-                    >
-                      <Trash2 className="w-4 h-4" /> Eliminar
-                    </button>
-                    <button
-                      onClick={() => {
-                        setSelectedVenta(venta)
-                        setShowDetail(true)
-                      }}
-                      className="btn btn-primary"
-                      style={{ minHeight: '40px', padding: '0 12px', fontSize: '14px' }}
-                    >
-                      <Eye className="w-4 h-4" /> Detalle ({venta.detalle?.length || 0})
-                    </button>
+        <div className="space-y-4">
+          {ventasFiltradas.map(venta => {
+            const isSelected = selectedVentas.includes(venta.id)
+            const canDelete = venta.estado_pago === 'pagado'
+            
+            return (
+              <div key={venta.id} className="border-2 border-gray-200 rounded-xl p-3 sm:p-4 hover:shadow-md transition">
+                <div className="flex justify-between items-start gap-3">
+                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelectVenta(venta.id, venta.estado_pago)}
+                      disabled={!canDelete}
+                      className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-30 disabled:cursor-not-allowed mt-1"
+                      title={!canDelete ? 'Solo ventas pagadas pueden eliminarse' : 'Seleccionar para eliminar'}
+                    />
+                    
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <h3 className="text-base sm:text-lg font-bold text-gray-800">Venta #{venta.id}</h3>
+                        {getEstadoBadge(venta.estado_pago || 'pagado')}
+                      </div>
+                      <p className="text-xs sm:text-sm text-gray-600">
+                        {new Date(venta.fecha).toLocaleString('es-AR')}
+                      </p>
+                      <p className="text-xs sm:text-sm text-gray-600">
+                        {venta.detalle?.length || 0} producto(s)
+                      </p>
+                      {venta.cliente_nombre && (
+                        <p className="text-xs sm:text-sm text-gray-600 truncate">
+                          {venta.cliente_nombre}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    {/* ✅ FIX NaN: Usar total_neto */}
+                    <p className="text-lg sm:text-2xl font-bold text-green-700">
+                      ${Number(venta.total_neto || venta.total_bruto || 0).toFixed(2)}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handleDelete(venta.id)}
+                        className="btn btn-danger text-xs sm:text-sm px-3 py-1.5"
+                      >
+                        Eliminar
+                      </button>
+                      <button
+                        onClick={() => handleShowDetail(venta)}
+                        className="btn btn-primary text-xs sm:text-sm px-3 py-1.5"
+                      >
+                        Detalle
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
+      {/* Modal de Detalle */}
       {showDetail && selectedVenta && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-2xl font-bold text-gray-800">Detalle de Venta #{selectedVenta.id}</h3>
-              <button onClick={() => setShowDetail(false)} className="btn btn-secondary touch-target">
-                <X className="w-6 h-6" />
-              </button>
+              <h3 className="text-2xl font-bold">Detalle #{selectedVenta.id}</h3>
+              <button onClick={() => setShowDetail(false)} className="btn btn-secondary">Cerrar</button>
             </div>
-
-            <div className="mb-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
-              <p className="text-gray-600">
-                <strong>Fecha:</strong> {new Date(selectedVenta.fecha).toLocaleString('es-AR')}
-              </p>
-              <p className="text-gray-600 mt-1">
-                <strong>Total:</strong>{' '}
-                <span className="text-green-700 font-bold text-xl">
-                  ${Number(selectedVenta.total).toFixed(2)}
-                </span>
-              </p>
-            </div>
-
-            <h4 className="text-lg font-bold text-gray-700 mb-3">
-              Productos vendidos: ({selectedVenta.detalle?.length || 0})
-            </h4>
             
-            {selectedVenta.detalle?.length === 0 ? (
-              <div className="text-center py-8 text-gray-500 bg-gray-50 rounded-xl">
-                <p>No hay productos registrados en esta venta.</p>
-                <p className="text-sm mt-2">Puede que los detalles se hayan eliminado.</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {selectedVenta.detalle?.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="border border-gray-200 rounded-lg p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2"
-                  >
+            {selectedVenta.cliente_id && (
+              <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-xl mb-4">
+                <h4 className="font-bold text-blue-800 mb-2 flex items-center gap-2">
+                  <User className="w-5 h-5" /> Información del Cliente
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-gray-600">Nombre:</p>
+                    <p className="font-semibold text-gray-800">
+                      {selectedVenta.cliente_nombre || 'Sin nombre'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-600">Teléfono:</p>
+                    <p className="font-semibold text-gray-800">
+                      {selectedVenta.cliente_telefono || 'No registrado'}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="mt-3 flex items-center gap-2">
+                  <span className="text-sm text-gray-600">Estado:</span>
+                  {getEstadoBadge(selectedVenta.estado_pago || 'pagado')}
+                </div>
+                
+                {selectedVenta.estado_pago === 'parcial' && (
+                  <div className="mt-3 flex gap-4 text-sm">
                     <div>
-                      <p className="font-bold text-gray-800 text-lg">
-                        {item.productos?.nombre || 'Producto eliminado'}
-                      </p>
-                      <p className="text-gray-600 text-sm">
-                        Talle: {item.productos?.talle || 'N/A'} | Color:{' '}
-                        {item.productos?.color || 'N/A'}
-                      </p>
+                      <p className="text-gray-600">Pagado:</p>
+                      <p className="font-bold text-green-700">${Number(selectedVenta.total_pagado || 0).toFixed(2)}</p>
                     </div>
-                    <div className="text-left sm:text-right">
-                      <p className="font-bold text-gray-800">
-                        {item.cantidad} x ${Number(item.precio_unitario).toFixed(2)}
-                      </p>
-                      <p className="text-green-700 font-bold text-lg">
-                        ${(item.cantidad * item.precio_unitario).toFixed(2)}
-                      </p>
+                    <div>
+                      <p className="text-gray-600">Pendiente:</p>
+                      <p className="font-bold text-red-700">${Number(selectedVenta.total_pendiente || 0).toFixed(2)}</p>
                     </div>
                   </div>
-                ))}
+                )}
+                
+                {selectedVenta.cliente_telefono && (
+                  <button
+                    onClick={() => handleWhatsApp(selectedVenta)}
+                    className="btn btn-success w-full mt-3 flex items-center justify-center gap-2"
+                  >
+                     Enviar comprobante por WhatsApp
+                  </button>
+                )}
               </div>
             )}
-
-            <button
-              onClick={() => setShowDetail(false)}
-              className="btn btn-primary w-full mt-6"
-            >
-              Cerrar
-            </button>
+            
+            <div className="space-y-2">
+              <h4 className="font-bold text-gray-700 flex items-center gap-2">
+                <Package className="w-5 h-5" /> Productos:
+              </h4>
+              {selectedVenta.detalle?.map((item, idx) => (
+                <div key={idx} className="border p-4 rounded-lg flex justify-between items-center">
+                  <div className="flex-1">
+                    <p className="font-bold">{item.productos?.nombre || 'Eliminado'}</p>
+                    <p className="text-sm text-gray-600">
+                      {item.cantidad} x ${item.precio_unitario} c/u
+                      {item.productos?.talle && ` | Talle: ${item.productos.talle}`}
+                      {item.productos?.color && ` | Color: ${item.productos.color}`}
+                    </p>
+                  </div>
+                  <p className="font-bold text-lg text-gray-800">
+                    ${(item.cantidad * item.precio_unitario).toFixed(2)}
+                  </p>
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-4 pt-4 border-t-2 border-gray-300">
+              <div className="flex justify-between items-center">
+                <span className="text-xl font-bold text-gray-700">Total:</span>
+                {/* ✅ FIX NaN: Usar total_neto en el modal */}
+                <span className="text-3xl font-bold text-green-700">
+                  ${Number(selectedVenta.total_neto || selectedVenta.total_bruto || 0).toFixed(2)}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       )}
-
-      <div className="mt-8 pt-6 border-t border-gray-200 text-center">
-        <p className="text-gray-500 text-sm mb-1">
-          Desarrollado por <span className="font-bold text-gray-700">Yamil Amen</span> 💻
-        </p>
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 max-w-sm mx-auto mt-4">
-          <p className="text-yellow-800 text-sm font-medium mb-1">☕ ¿Te gustó el sistema?</p>
-          <p className="text-yellow-700 text-xs">Se aceptan donaciones a:</p>
-          <p className="text-yellow-900 font-bold text-lg mt-1">FacundoRivero11</p>
-        </div>
-        <p className="text-gray-300 text-xs mt-4">
-          © {new Date().getFullYear()} Stock Mercaderia
-        </p>
-      </div>
     </div>
   )
 }

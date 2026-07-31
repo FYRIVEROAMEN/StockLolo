@@ -6,6 +6,8 @@ import SalesForm from './SalesForm'
 import SalesHistory from './SalesHistory'
 import Tutorial from './Tutorial'
 import Swal from 'sweetalert2'
+import MetricsView from './MetricsView'
+import ClientesView from './ClientesView'
 
 function Dashboard({ onLogout }) {
   const [productos, setProductos] = useState([])
@@ -17,10 +19,9 @@ function Dashboard({ onLogout }) {
   const [showInactive, setShowInactive] = useState(false)
   const [productosInactivos, setProductosInactivos] = useState([])
   const [showTutorial, setShowTutorial] = useState(false)
-  const [addedToCart, setAddedToCart] = useState(null) // ID del producto recién agregado
-  
-  // 👇 CARRITO PERSISTENTE (vive en el Dashboard)
+  const [addedToCart, setAddedToCart] = useState(null)
   const [cart, setCart] = useState([])
+  const [showMoreMenu, setShowMoreMenu] = useState(false)
 
   const fetchProductos = useCallback(async () => {
     setLoading(true)
@@ -51,70 +52,104 @@ function Dashboard({ onLogout }) {
   }, [fetchProductos])
 
   const handleDelete = async (id) => {
-    if (window.confirm('¿Desactivar este producto?\n\nNo se borrará de la base de datos para no romper el historial de ventas, pero dejará de aparecer en el inventario.')) {
-      try {
-        await deactivateProducto(id)
-        fetchProductos()
-      } catch (err) {
-        alert('Error al desactivar: ' + (err.response?.data?.message || err.message))
-      }
+  const result = await Swal.fire({
+    title: '¿Desactivar producto?',
+    html: `
+      <p style="margin-bottom: 10px;">Este producto dejará de aparecer en el inventario.</p>
+      <p style="color: #6b7280; font-size: 0.9rem;">
+        No se borrará de la base de datos para no romper el historial de ventas.
+        Podés reactivarlo después desde "Ver productos desactivados".
+      </p>
+    `,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Sí, desactivar',
+    cancelButtonText: 'Cancelar',
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#6b7280'
+  })
+
+  if (result.isConfirmed) {
+    try {
+      await deactivateProducto(id)
+      fetchProductos()
+      Swal.fire({
+        title: 'Producto desactivado',
+        text: 'Podés reactivarlo cuando quieras',
+        icon: 'success',
+        timer: 2000,
+        showConfirmButton: false
+      })
+    } catch (err) {
+      Swal.fire({
+        title: 'Error',
+        text: err.response?.data?.message || err.message,
+        icon: 'error'
+      })
     }
   }
+}
 
-  const handleReactivar = async (id) => {
+   const handleReactivar = async (id) => {
     try {
       await reactivateProducto(id)
       fetchProductosInactivos()
       fetchProductos()
+      Swal.fire({
+        title: 'Producto reactivado',
+        text: 'El producto volvió al inventario activo',
+        icon: 'success',
+        timer: 2000,
+        showConfirmButton: false
+      })
     } catch (err) {
-      alert('Error al reactivar: ' + (err.response?.data?.message || err.message))
+      Swal.fire({
+        title: 'Error al reactivar',
+        text: err.response?.data?.message || err.message,
+        icon: 'error',
+        confirmButtonColor: '#dc2626'
+      })
     }
   }
 
-  
-  // 👇 FUNCIÓN PARA AGREGAR AL CARRITO (desde cualquier parte)
-const addToCartFromDashboard = (product) => {
-  setCart(prevCart => {
-    const existingItem = prevCart.find(item => item.id === product.id)
-    let newCart
-    
-    if (existingItem) {
-      if (existingItem.quantity + 1 > product.stock) {
-        Swal.fire({
-          title: 'Stock insuficiente',
-          text: `Solo quedan ${product.stock} unidades de ${product.nombre}.`,
-          icon: 'warning',
-          confirmButtonColor: '#dc2626',
-          timer: 2000,
-          showConfirmButton: false
-        })
-        return prevCart
+  const addToCartFromDashboard = (product) => {
+    setCart(prevCart => {
+      const existingItem = prevCart.find(item => item.id === product.id)
+      let newCart
+      
+      if (existingItem) {
+        if (existingItem.quantity + 1 > product.stock) {
+          Swal.fire({
+            title: 'Stock insuficiente',
+            text: `Solo quedan ${product.stock} unidades de ${product.nombre}.`,
+            icon: 'warning',
+            confirmButtonColor: '#dc2626',
+            timer: 2000,
+            showConfirmButton: false
+          })
+          return prevCart
+        }
+        newCart = prevCart.map(item => 
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        )
+      } else {
+        newCart = [...prevCart, { ...product, quantity: 1 }]
       }
-      newCart = prevCart.map(item => 
-        item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
-      )
-    } else {
-      newCart = [...prevCart, { ...product, quantity: 1 }]
-    }
-    
-    // 👇 Feedback visual: mostrar notificación
-    Swal.fire({
-      title: '¡Agregado al carrito!',
-      text: `${product.nombre} (${newCart.reduce((sum, item) => item.id === product.id ? item.quantity : sum, 0)} en total)`,
-      icon: 'success',
-      toast: true,
-      position: 'top-end',
-      showConfirmButton: false,
-      timer: 2000,
-      timerProgressBar: true
+      
+      Swal.fire({
+        title: 'Agregado al carrito!',
+        text: `${product.nombre} (${newCart.reduce((sum, item) => item.id === product.id ? item.quantity : sum, 0)} en total)`,
+        icon: 'success',
+        toast: true,
+        position: 'top-end',
+        showConfirmButton: false,
+        timer: 2000,
+        timerProgressBar: true
+      })
+      
+      return newCart
     })
-    
-    return newCart
-  })
-  
-  // 👇 ELIMINAMOS: setCurrentView('sales')
-  // El usuario se queda en Inventario para seguir seleccionando
-}
+  }
 
   const filteredProductos = productos.filter(p =>
     p.nombre?.toLowerCase().includes(search.toLowerCase()) ||
@@ -126,12 +161,21 @@ const addToCartFromDashboard = (product) => {
   const totalProductos = productos.length
   const totalStock = productos.reduce((acc, p) => acc + (p.stock || 0), 0)
 
+  const productosEnRiesgo = productos
+    .filter(p => p.stock <= 5)
+    .sort((a, b) => a.stock - b.stock)
+
+  const scrollToProductos = () => {
+    window.scrollTo({ top: 450, behavior: 'smooth' })
+  }
+
   return (
     <div className="min-h-screen pb-32 md:pb-8">
+      {/* HEADER COMPACTO */}
       <header className="bg-white shadow-sm border-b sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
-          <h1 className="text-xl md:text-2xl font-bold text-gray-800 flex items-center gap-2">
-            <Package className="w-7 h-7 md:w-8 md:h-8 text-blue-600" /> Stock Mercadería
+        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+          <h1 className="text-lg md:text-2xl font-bold text-gray-800 flex items-center gap-2">
+            <Package className="w-6 h-6 md:w-8 md:h-8 text-blue-600" /> Stock Mercadería
           </h1>
           <button onClick={onLogout} className="btn btn-secondary touch-target">
             <LogOut className="w-5 h-5" /> <span className="hidden sm:inline">Salir</span>
@@ -140,7 +184,6 @@ const addToCartFromDashboard = (product) => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
-        {/* Navegación Desktop */}
         <div className="top-tabs">
           <button onClick={() => setCurrentView('dashboard')} className={`tab-btn ${currentView === 'dashboard' ? 'active' : ''}`}>
             <Package className="w-6 h-6" /> Inventario
@@ -154,50 +197,172 @@ const addToCartFromDashboard = (product) => {
           <button onClick={() => setCurrentView('history')} className={`tab-btn ${currentView === 'history' ? 'active' : ''}`}>
             <BarChart3 className="w-6 h-6" /> Historial
           </button>
+          <button onClick={() => setCurrentView('clientes')} className={`tab-btn ${currentView === 'clientes' ? 'active' : ''}`}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+            </svg>
+            Clientes
+          </button>
+          <button onClick={() => setCurrentView('metrics')} className={`tab-btn ${currentView === 'metrics' ? 'active' : ''}`}>
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Métricas
+          </button>
         </div>
 
         {currentView === 'dashboard' ? (
           <>
-            {/* Stats: carrusel horizontal en mobile, grid en desktop */}
+            {/* ==========================================
+                STATS: Cards compactas (mobile) / Grid (desktop)
+                ========================================== */}
             <div className="mb-6">
-              <div className="sm:hidden flex gap-3 overflow-x-auto pb-2 -mx-4 px-4 snap-x snap-mandatory">
-                <div className="snap-center shrink-0 w-[70%] bg-gradient-to-br from-indigo-50 to-indigo-100 p-4 rounded-2xl border border-indigo-200">
-                  <p className="text-sm text-indigo-700 font-medium">Total Items</p>
-                  <p className="text-3xl font-bold text-indigo-900 mt-1">{totalProductos}</p>
-                </div>
-                <div className="snap-center shrink-0 w-[70%] bg-gradient-to-br from-blue-50 to-blue-100 p-4 rounded-2xl border border-blue-200">
-                  <p className="text-sm text-blue-700 font-medium">Stock Total</p>
-                  <p className="text-3xl font-bold text-blue-600 mt-1">{totalStock}</p>
-                </div>
-                <div className={`snap-center shrink-0 w-[70%] p-4 rounded-2xl border ${
-                  stockBajo > 0 
-                    ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
-                    : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
-                }`}>
-                  <p className={`text-sm font-medium flex items-center gap-1 ${
-                    stockBajo > 0 ? 'text-red-700' : 'text-green-700'
-                  }`}>
-                    <AlertTriangle className="w-4 h-4" /> Stock Bajo
-                  </p>
-                  <p className={`text-3xl font-bold mt-1 ${
-                    stockBajo > 0 ? 'text-red-600' : 'text-green-600'
-                  }`}>{stockBajo}</p>
+              {/* MOBILE - Carrusel MANUAL (sin auto-scroll) */}
+              <div 
+                className="sm:hidden overflow-x-auto -mx-4 px-4"
+                style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+              >
+                <div className="flex gap-3 pb-2" style={{ width: 'max-content' }}>
                   
-                  {stockBajo > 0 && (
-                    <div className="mt-2 pt-2 border-t border-red-200">
-                      {productos
-                        .filter(p => p.stock <= 5 && p.stock > 0)
-                        .slice(0, 3)
-                        .map(p => (
-                          <div key={p.id} className="text-xs text-red-700 truncate">
-                            • {p.nombre}: <strong>{p.stock}</strong>
+                  {/* Card 1: Total Items -> Va a Métricas */}
+                  <button
+                    onClick={() => setCurrentView('metrics')}
+                    className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl border border-indigo-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
+                  >
+                    <div>
+                      <p className="text-xs text-indigo-700 font-medium">Total Items</p>
+                      <p className="text-3xl font-bold text-indigo-900 mt-1">{totalProductos}</p>
+                    </div>
+                    <p className="text-[10px] text-indigo-600">productos activos</p>
+                  </button>
+
+                  {/* Card 2: Stock Total -> Va a Inventario */}
+                  <button
+                    onClick={() => {
+                      setCurrentView('dashboard');
+                      setTimeout(() => scrollToProductos(), 100);
+                    }}
+                    className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
+                  >
+                    <div>
+                      <p className="text-xs text-blue-700 font-medium">Stock Total</p>
+                      <p className="text-3xl font-bold text-blue-600 mt-1">{totalStock}</p>
+                    </div>
+                    <p className="text-[10px] text-blue-600">unidades en inventario</p>
+                  </button>
+
+                  {/* Card 3: Alertas de Stock -> Va a Inventario */}
+                  <button
+                    onClick={() => {
+                      setCurrentView('dashboard');
+                      if (stockBajo > 0) setTimeout(() => scrollToProductos(), 100);
+                    }}
+                    className={`shrink-0 w-[70vw] h-[140px] p-3 rounded-2xl border flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer ${
+                      stockBajo > 0 
+                        ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
+                        : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
+                    }`}
+                  >
+                    <p className={`text-xs font-bold flex items-center gap-1 ${
+                      stockBajo > 0 ? 'text-red-700' : 'text-green-700'
+                    }`}>
+                      <AlertTriangle className="w-3 h-3" /> Alertas de Stock
+                      {stockBajo > 0 && <span className="ml-1">({stockBajo})</span>}
+                    </p>
+                    
+                    {stockBajo > 0 ? (
+                      <div className="mt-2 flex-1 overflow-y-auto space-y-1 pr-1">
+                        {productosEnRiesgo.slice(0, 5).map(p => (
+                          <div key={p.id} className="flex justify-between items-center text-[10px] leading-tight">
+                            <span className="truncate flex-1 text-red-800 font-medium">{p.nombre}</span>
+                            <span className="font-bold text-red-600 ml-1 text-[9px] whitespace-nowrap">
+                              {p.stock}{p.stock === 1 ? 'ud' : 'uds'}
+                            </span>
                           </div>
                         ))}
+                        {productosEnRiesgo.length > 5 && (
+                          <p className="text-red-600 text-[9px] font-semibold text-center mt-1">
+                            +{productosEnRiesgo.length - 5} más...
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-xs text-green-700 font-medium">Todo en orden</p>
+                      </div>
+                    )}
+                  </button>
+
+                  {/* DUPLICADO PARA SCROLL INFINITO */}
+                  <button
+                    onClick={() => setCurrentView('metrics')}
+                    className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl border border-indigo-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
+                  >
+                    <div>
+                      <p className="text-xs text-indigo-700 font-medium">Total Items</p>
+                      <p className="text-3xl font-bold text-indigo-900 mt-1">{totalProductos}</p>
                     </div>
-                  )}
+                    <p className="text-[10px] text-indigo-600">productos activos</p>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setCurrentView('dashboard');
+                      setTimeout(() => scrollToProductos(), 100);
+                    }}
+                    className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
+                  >
+                    <div>
+                      <p className="text-xs text-blue-700 font-medium">Stock Total</p>
+                      <p className="text-3xl font-bold text-blue-600 mt-1">{totalStock}</p>
+                    </div>
+                    <p className="text-[10px] text-blue-600">unidades en inventario</p>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setCurrentView('dashboard');
+                      if (stockBajo > 0) setTimeout(() => scrollToProductos(), 100);
+                    }}
+                    className={`shrink-0 w-[70vw] h-[140px] p-3 rounded-2xl border flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer ${
+                      stockBajo > 0 
+                        ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
+                        : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
+                    }`}
+                  >
+                    <p className={`text-xs font-bold flex items-center gap-1 ${
+                      stockBajo > 0 ? 'text-red-700' : 'text-green-700'
+                    }`}>
+                      <AlertTriangle className="w-3 h-3" /> Alertas de Stock
+                      {stockBajo > 0 && <span className="ml-1">({stockBajo})</span>}
+                    </p>
+                    
+                    {stockBajo > 0 ? (
+                      <div className="mt-2 flex-1 overflow-y-auto space-y-1 pr-1">
+                        {productosEnRiesgo.slice(0, 5).map(p => (
+                          <div key={p.id} className="flex justify-between items-center text-[10px] leading-tight">
+                            <span className="truncate flex-1 text-red-800 font-medium">{p.nombre}</span>
+                            <span className="font-bold text-red-600 ml-1 text-[9px] whitespace-nowrap">
+                              {p.stock}{p.stock === 1 ? 'ud' : 'uds'}
+                            </span>
+                          </div>
+                        ))}
+                        {productosEnRiesgo.length > 5 && (
+                          <p className="text-red-600 text-[9px] font-semibold text-center mt-1">
+                            +{productosEnRiesgo.length - 5} más...
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="flex-1 flex items-center justify-center">
+                        <p className="text-xs text-green-700 font-medium">Todo en orden</p>
+                      </div>
+                    )}
+                  </button>
                 </div>
               </div>
 
+              {/* DESKTOP - Grid estático */}
               <div className="hidden sm:grid sm:grid-cols-3 gap-4">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
                   <p className="text-lg text-gray-600 font-medium">Total Productos</p>
@@ -207,41 +372,56 @@ const addToCartFromDashboard = (product) => {
                   <p className="text-lg text-gray-600 font-medium">Stock Total</p>
                   <p className="text-4xl font-bold text-blue-600 mt-2">{totalStock}</p>
                 </div>
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                   <p className="text-lg text-gray-600 font-medium flex items-center gap-2">
-                    <AlertTriangle className="w-6 h-6 text-red-500" /> Stock Bajo (≤5)
+                    <AlertTriangle className="w-6 h-6 text-red-500" /> Alertas de Stock
                   </p>
-                  <p className={`text-4xl font-bold mt-2 ${stockBajo > 0 ? 'text-red-600' : 'text-green-600'}`}>{stockBajo}</p>
                   
-                  {stockBajo > 0 && (
-                    <div className="mt-3 pt-3 border-t border-gray-200">
-                      <p className="text-sm font-semibold text-gray-700 mb-2">Productos en riesgo:</p>
-                      <div className="space-y-1 max-h-24 overflow-y-auto">
-                        {productos
-                          .filter(p => p.stock <= 5 && p.stock > 0)
-                          .map(p => (
-                            <div key={p.id} className="flex justify-between items-center text-sm">
-                              <span className="text-gray-600 truncate">{p.nombre}</span>
-                              <span className={`font-bold ${p.stock <= 2 ? 'text-red-600' : 'text-orange-600'}`}>
-                                {p.stock} {p.stock === 1 ? 'unidad' : 'unidades'}
-                              </span>
-                            </div>
-                          ))}
-                        {productos.filter(p => p.stock === 0).length > 0 && (
-                          <div className="text-sm text-red-600 font-bold mt-2">
-                            ⚠️ {productos.filter(p => p.stock === 0).length} producto(s) agotado(s)
+                  {stockBajo === 0 ? (
+                    <p className="text-2xl font-bold text-green-600 mt-2">Todo en orden</p>
+                  ) : (
+                    <div className="mt-3 max-h-48 overflow-y-auto pr-2 space-y-2">
+                      {productosEnRiesgo.map(p => (
+                        <div 
+                          key={p.id} 
+                          className={`flex justify-between items-center p-2 rounded-lg ${
+                            p.stock === 0 
+                              ? 'bg-red-100 border border-red-300' 
+                              : 'bg-orange-50 border border-orange-200'
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <p className={`font-semibold text-sm truncate ${
+                              p.stock === 0 ? 'text-red-800' : 'text-orange-800'
+                            }`}>
+                              {p.nombre}
+                            </p>
+                            <p className="text-xs text-gray-600">
+                              {p.categoria} • {p.talle || 'N/A'}
+                            </p>
                           </div>
-                        )}
-                      </div>
+                          <div className="text-right ml-2">
+                            <span className={`font-bold text-lg ${
+                              p.stock === 0 ? 'text-red-600' : 'text-orange-600'
+                            }`}>
+                              {p.stock}
+                            </span>
+                            <p className="text-xs text-gray-500">
+                              {p.stock === 0 ? 'Agotado' : 'unidades'}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
               </div>
             </div>
 
+            {/* BARRA DE BÚSQUEDA Y BOTÓN AGREGAR */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
               <div className="relative flex-1 max-w-md w-full">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-gray-400" id="search-input" />
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-gray-400" />
                 <input
                   type="text"
                   placeholder="Buscar por nombre, categoría o color..."
@@ -253,13 +433,12 @@ const addToCartFromDashboard = (product) => {
               <button
                 onClick={() => { setShowForm(true); setEditId(null); }}
                 className="btn btn-primary w-full sm:w-auto"
-                id="add-product-btn"
               >
                 <Plus className="w-6 h-6" /> Agregar Producto
               </button>
             </div>
 
-            {/* VISTA MOBILE: Cards con IMAGEN y botón VENDER */}
+            {/* VISTA MOBILE: Cards con IMAGEN */}
             <div className="product-cards-mobile">
               {loading ? <div className="loading-state">Cargando productos...</div> : 
                 filteredProductos.length === 0 ? (
@@ -269,27 +448,19 @@ const addToCartFromDashboard = (product) => {
                     <div key={p.id} className="product-card">
                       {p.imagen_url ? (
                         <div style={{ marginBottom: '12px', borderRadius: '12px', overflow: 'hidden', background: '#f3f4f6' }}>
-                          <img 
-                            src={p.imagen_url} 
-                            alt={p.nombre}
-                            style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }}
-                            onError={(e) => { e.target.style.display = 'none'; }}
-                          />
+                          <img src={p.imagen_url} alt={p.nombre} style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
                         </div>
                       ) : (
                         <div style={{ marginBottom: '12px', borderRadius: '12px', overflow: 'hidden', background: '#f3f4f6', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
                           <Package className="w-12 h-12" />
                         </div>
                       )}
-
                       <div className="product-card-header">
                         <div>
                           <h3 className="product-card-title">{p.nombre}</h3>
                           <p className="product-card-meta">{p.categoria || 'Sin categoría'}</p>
                         </div>
-                        <span className={`stock-badge ${p.stock <= 5 ? 'stock-low' : 'stock-ok'}`}>
-                          Stock: {p.stock}
-                        </span>
+                        <span className={`stock-badge ${p.stock <= 5 ? 'stock-low' : 'stock-ok'}`}>Stock: {p.stock}</span>
                       </div>
                       <div className="product-card-details">
                         <div className="detail-item">Talle: <span>{p.talle || '-'}</span></div>
@@ -298,29 +469,14 @@ const addToCartFromDashboard = (product) => {
                       <div className="product-card-footer">
                         <div className="product-price">${Number(p.precio).toFixed(2)}</div>
                         <div style={{ display: 'flex', gap: '8px', width: '100%', marginTop: '8px' }}>
-                          {/* 👇 Botón Vender Rápido - Ahora agrega al carrito persistente */}
-                          <button 
-                            onClick={() => {
-                              addToCartFromDashboard(p)
-                              setAddedToCart(p.id)
-                              setTimeout(() => setAddedToCart(null), 2000) // Mostrar por 2 segundos
-                            }} 
-                            className="btn btn-success touch-target" 
-                            style={{ 
-                              flex: 1,
-                              position: 'relative',
-                              background: addedToCart === p.id ? '#16a34a' : '#22c55e'
-                            }}
-                            disabled={p.stock <= 0}
-                          >
-                            <ShoppingCart size={18} /> 
-                            {addedToCart === p.id ? '✓ Agregado' : 'Vender'}
+                          <button onClick={() => { addToCartFromDashboard(p); setAddedToCart(p.id); setTimeout(() => setAddedToCart(null), 2000); }} className="btn btn-success touch-target" style={{ flex: 1, position: 'relative', background: addedToCart === p.id ? '#16a34a' : '#22c55e' }} disabled={p.stock <= 0}>
+                            <ShoppingCart size={18} /> {addedToCart === p.id ? 'Agregado' : 'Vender'}
                           </button>
                           <button onClick={() => { setShowForm(true); setEditId(p.id); }} className="btn btn-secondary touch-target" style={{ flex: 1 }}>
                             <Edit2 size={18} /> Editar
                           </button>
                           <button onClick={() => handleDelete(p.id)} className="btn btn-danger touch-target" style={{ flex: 1 }}>
-                            <Trash2 size={18} /> Eliminar
+                            <Trash2 size={18} /> Desactivar
                           </button>
                         </div>
                       </div>
@@ -348,12 +504,7 @@ const addToCartFromDashboard = (product) => {
                         <tr key={p.id} className="hover:bg-blue-50 transition">
                           <td className="px-6 py-4">
                             {p.imagen_url ? (
-                              <img 
-                                src={p.imagen_url} 
-                                alt={p.nombre}
-                                style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '8px' }}
-                                onError={(e) => { e.target.style.display = 'none'; }}
-                              />
+                              <img src={p.imagen_url} alt={p.nombre} style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '8px' }} onError={(e) => { e.target.style.display = 'none'; }} />
                             ) : (
                               <div style={{ width: '50px', height: '50px', background: '#f3f4f6', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <Package className="w-6 h-6 text-gray-400" />
@@ -370,33 +521,13 @@ const addToCartFromDashboard = (product) => {
                           </td>
                           <td className="px-6 py-4">
                             <div className="flex items-center gap-2 justify-end">
-                              {/* 👇 Botón Vender (solo desktop) */}
-                              <button 
-                                onClick={() => {
-                                  addToCartFromDashboard(p)
-                                  setAddedToCart(p.id)
-                                  setTimeout(() => setAddedToCart(null), 2000)
-                                }} 
-                                className="btn btn-success touch-target"
-                                disabled={p.stock <= 0}
-                                title="Agregar al carrito"
-                              >
+                              <button onClick={() => { addToCartFromDashboard(p); setAddedToCart(p.id); setTimeout(() => setAddedToCart(null), 2000); }} className="btn btn-success touch-target" disabled={p.stock <= 0} title="Agregar al carrito">
                                 <ShoppingCart className="w-4 h-4" />
                               </button>
-                              
-                              <button 
-                                onClick={() => { setShowForm(true); setEditId(p.id); }} 
-                                className="btn btn-secondary touch-target"
-                                title="Editar producto"
-                              >
+                              <button onClick={() => { setShowForm(true); setEditId(p.id); }} className="btn btn-secondary touch-target" title="Editar producto">
                                 <Edit2 className="w-5 h-5" />
                               </button>
-                              
-                              <button 
-                                onClick={() => handleDelete(p.id)} 
-                                className="btn btn-danger touch-target"
-                                title="Eliminar producto"
-                              >
+                              <button onClick={() => handleDelete(p.id)} className="btn btn-danger touch-target" title="Eliminar producto">
                                 <Trash2 className="w-5 h-5" />
                               </button>
                             </div>
@@ -451,31 +582,67 @@ const addToCartFromDashboard = (product) => {
             )}
           </>
         ) : currentView === 'sales' ? (
-          // 👇 Pasamos el carrito y la función para limpiarlo
-          <SalesForm 
-            onSaleRecorded={fetchProductos} 
-            productos={productos}
-            cart={cart}
-            setCart={setCart}
-          />
-        ) : (
+          <SalesForm onSaleRecorded={fetchProductos} productos={productos} cart={cart} setCart={setCart} />
+        ) : currentView === 'history' ? (
           <SalesHistory />
-        )}
+        ) : currentView === 'clientes' ? (
+          <ClientesView />
+        ) : currentView === 'metrics' ? (
+      <MetricsView onNavigate={setCurrentView} />
+        ) : null}
       </main>
 
       <nav id="bottom-nav" className="bottom-nav">
-        <button onClick={() => setCurrentView('dashboard')} className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}>
+        <button onClick={() => { setCurrentView('dashboard'); setShowMoreMenu(false); }} className={`nav-item ${currentView === 'dashboard' ? 'active' : ''}`}>
           <Package className="w-6 h-6" /> <span>Inventario</span>
         </button>
-        <button onClick={() => setCurrentView('sales')} className={`nav-item ${currentView === 'sales' ? 'active' : ''}`}>
+        <button onClick={() => { setCurrentView('sales'); setShowMoreMenu(false); }} className={`nav-item ${currentView === 'sales' ? 'active' : ''}`}>
           <ShoppingCart className="w-6 h-6" /> <span>Ventas</span>
           {cart.length > 0 && (
             <span className="ml-1 bg-red-500 text-white text-xs px-2 py-1 rounded-full">{cart.length}</span>
           )}
         </button>
-        <button onClick={() => setCurrentView('history')} className={`nav-item ${currentView === 'history' ? 'active' : ''}`}>
+        <button onClick={() => { setCurrentView('history'); setShowMoreMenu(false); }} className={`nav-item ${currentView === 'history' ? 'active' : ''}`}>
           <BarChart3 className="w-6 h-6" /> <span>Historial</span>
         </button>
+        
+        {/* Botón "Más" */}
+        <button onClick={() => setShowMoreMenu(!showMoreMenu)} className={`nav-item ${showMoreMenu ? 'active' : ''}`}>
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+          </svg>
+          <span>Más</span>
+        </button>
+
+        {/* Menú desplegable */}
+        {showMoreMenu && (
+          <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-64 bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
+            <button 
+              onClick={() => { setCurrentView('clientes'); setShowMoreMenu(false); }}
+              className="w-full text-left px-5 py-4 text-gray-700 hover:bg-blue-50 flex items-center gap-3 border-b border-gray-100"
+            >
+              <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              </svg>
+              <div>
+                <p className="font-semibold">Clientes</p>
+                <p className="text-xs text-gray-500">Deudas y pagos</p>
+              </div>
+            </button>
+            <button 
+              onClick={() => { setCurrentView('metrics'); setShowMoreMenu(false); }}
+              className="w-full text-left px-5 py-4 text-gray-700 hover:bg-blue-50 flex items-center gap-3"
+            >
+              <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+              <div>
+                <p className="font-semibold">Métricas</p>
+                <p className="text-xs text-gray-500">Estadísticas y reportes</p>
+              </div>
+            </button>
+          </div>
+        )}
       </nav>
 
       {showForm && <ProductForm onClose={() => setShowForm(false)} editId={editId} onSave={fetchProductos} />}

@@ -1,15 +1,44 @@
 import { useState, useEffect, useRef } from 'react'
-import { Search, Plus, Trash2, ShoppingCart, Minus, X, Barcode } from 'lucide-react'
-import { updateProducto, createVenta, createDetalleVenta } from '../services/api'
+import { Search, Plus, Trash2, ShoppingCart, Minus, X, Barcode, User, Phone, DollarSign, Info, Percent, Tag } from 'lucide-react'
+import { 
+  updateProducto, 
+  createVenta, 
+  createDetalleVenta, 
+  crearOActualizarCliente, 
+  registrarPago, 
+  actualizarEstadoPagoVenta,
+  updateVentaCliente
+} from '../services/api'
 import Swal from 'sweetalert2'
 import { BrowserMultiFormatReader } from '@zxing/library'
+
+// Función utilitaria para formatear teléfonos argentinos para WhatsApp
+const formatWhatsAppNumber = (phone) => {
+  if (!phone) return ''
+  let clean = phone.replace(/\D/g, '')
+  if (clean.startsWith('549')) return clean
+  if (clean.startsWith('0')) clean = clean.slice(1)
+  if (clean.startsWith('9')) clean = clean.slice(1)
+  if (clean.startsWith('15')) clean = '11' + clean
+  clean = clean.replace(/^(11|2\d{2}|3\d{2})15/, '$1')
+  return `549${clean}`
+}
 
 function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [filteredProducts, setFilteredProducts] = useState([])
   const [isProcessing, setIsProcessing] = useState(false)
-  const [whatsappNumber, setWhatsappNumber] = useState('')
   const [isScanning, setIsScanning] = useState(false)
+  
+  const [clienteTelefono, setClienteTelefono] = useState('')
+  const [clienteNombre, setClienteNombre] = useState('')
+  const [montoPagado, setMontoPagado] = useState(0)
+  
+  // ✅ NUEVOS ESTADOS PARA DESCUENTOS
+  const [aplicarDescuento, setAplicarDescuento] = useState(false)
+  const [tipoDescuento, setTipoDescuento] = useState('porcentaje') // 'porcentaje' o 'monto'
+  const [valorDescuento, setValorDescuento] = useState(0)
+  const [motivoDescuento, setMotivoDescuento] = useState('Promoción')
   
   const codeReaderRef = useRef(null)
   const isCancelledRef = useRef(false)
@@ -42,7 +71,11 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
         item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
       ))
     } else {
-      setCart([...cart, { ...product, quantity: 1 }])
+      const newCart = [...cart, { ...product, quantity: 1 }]
+      setCart(newCart)
+      if (cart.length === 0) {
+        setMontoPagado(product.precio)
+      }
     }
     setSearchTerm('')
     setFilteredProducts([])
@@ -58,31 +91,101 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
     setCart(cart.map(item => item.id === id ? { ...item, quantity: newQuantity } : item))
   }
 
-  const removeFromCart = (id) => setCart(cart.filter(item => item.id !== id))
-  const total = cart.reduce((sum, item) => sum + (item.precio * item.quantity), 0)
+  const removeFromCart = (id) => {
+    const newCart = cart.filter(item => item.id !== id)
+    setCart(newCart)
+    if (newCart.length === 0) {
+      setMontoPagado(0)
+    }
+  }
+  
+  // ✅ CÁLCULOS CON DESCUENTO
+  const totalBruto = cart.reduce((sum, item) => sum + (item.precio * item.quantity), 0)
+  const descuentoMonto = aplicarDescuento 
+    ? (tipoDescuento === 'porcentaje' 
+        ? totalBruto * (valorDescuento / 100) 
+        : valorDescuento)
+    : 0
+  const totalNeto = totalBruto - descuentoMonto
+  const resta = totalNeto - (Number(montoPagado) || 0)
 
   const handleCheckout = async () => {
     if (cart.length === 0) {
       Swal.fire({ title: 'Carrito vacío', text: 'Agregá al menos un producto.', icon: 'warning', confirmButtonColor: '#dc2626' })
       return
     }
+
+    if (!clienteTelefono.trim()) {
+      Swal.fire({
+        title: 'Teléfono requerido',
+        text: 'Ingresá el teléfono del cliente para completar la venta y registrar el sorteo.',
+        icon: 'warning',
+        confirmButtonColor: '#dc2626'
+      })
+      return
+    }
+
+    if (Number(montoPagado) < 0 || Number(montoPagado) > totalNeto) {
+      Swal.fire({
+        title: 'Monto inválido',
+        text: `El monto pagado debe ser entre $0 y el total neto ($${totalNeto.toFixed(2)}).`,
+        icon: 'warning',
+        confirmButtonColor: '#dc2626'
+      })
+      return
+    }
+
     setIsProcessing(true)
     try {
-      const { data: ventaData, error: ventaError } = await createVenta({ total })
+      const LOCAL_ID = import.meta.env.VITE_LOCAL_ID || 1
+
+      // 1. Crear la venta con los nuevos campos de descuento
+      const { data: ventaData, error: ventaError } = await createVenta({ 
+        total_bruto: totalBruto,
+        descuento_monto: descuentoMonto,
+        descuento_motivo: aplicarDescuento ? motivoDescuento : 'Sin descuento',
+        total_neto: totalNeto,
+        local_id: LOCAL_ID 
+      })
       if (ventaError) throw new Error(ventaError.message)
       const ventaId = ventaData[0].id
 
+      // 2. Crear los detalles y actualizar stock
       for (const item of cart) {
-        await createDetalleVenta({ venta_id: ventaId, producto_id: item.id, cantidad: item.quantity, precio_unitario: item.precio })
+        await createDetalleVenta({ venta_id: ventaId, producto_id: item.id, cantidad: item.quantity, precio_unitario: item.precio, local_id: LOCAL_ID })
         await updateProducto(item.id, { stock: item.stock - item.quantity })
       }
 
+      // 3. Crear o actualizar cliente
+      const clienteId = await crearOActualizarCliente(
+        clienteTelefono.trim(),
+        clienteNombre.trim() || null,
+        LOCAL_ID,
+        totalNeto // Usar total_neto para el total_compras del cliente
+      )
+
+      // 4. Vincular el cliente a la venta
+      await updateVentaCliente(ventaId, clienteId)
+
+      // 5. Registrar el pago
+      if (Number(montoPagado) > 0) {
+        await registrarPago(ventaId, clienteId, Number(montoPagado), LOCAL_ID)
+      }
+
+      // 6. Actualizar estado de pago de la venta
+      let estadoPago = 'pagado'
+      if (Number(montoPagado) === 0) estadoPago = 'pendiente'
+      else if (Number(montoPagado) < totalNeto) estadoPago = 'parcial'
+      
+      await actualizarEstadoPagoVenta(ventaId, estadoPago)
+
+      // 7. Generar mensaje de WhatsApp
       const fecha = new Date().toLocaleString('es-AR', { 
         day: '2-digit', month: '2-digit', year: 'numeric', 
         hour: '2-digit', minute: '2-digit' 
       })
 
-      let mensajeWhatsApp = `*COMPROBANTE DE VENTA* 🧾\n`
+      let mensajeWhatsApp = `*COMPROBANTE DE VENTA*\n`
       mensajeWhatsApp += `━━━━━━━━━━━━━━━━━━━━\n`
       mensajeWhatsApp += `📅 ${fecha}\n`
       mensajeWhatsApp += ` Venta #${ventaId}\n`
@@ -94,26 +197,52 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
         mensajeWhatsApp += `   $${subtotal}\n`
       })
       mensajeWhatsApp += `\n━━━━━━━━━━━━━━━━━━━━\n`
-      mensajeWhatsApp += `*TOTAL: $${total.toFixed(2)}*\n`
+      mensajeWhatsApp += `*Subtotal: $${totalBruto.toFixed(2)}*\n`
+      
+      if (aplicarDescuento && descuentoMonto > 0) {
+        mensajeWhatsApp += `*Descuento (${motivoDescuento}): -$${descuentoMonto.toFixed(2)}*\n`
+      }
+      
+      mensajeWhatsApp += `*TOTAL: $${totalNeto.toFixed(2)}*\n`
+      
+      if (Number(montoPagado) < totalNeto) {
+        mensajeWhatsApp += `*Pagado: $${Number(montoPagado).toFixed(2)}*\n`
+        mensajeWhatsApp += `*Resta: $${resta.toFixed(2)}*\n`
+      }
+      
       mensajeWhatsApp += `━━━━━━━━━━━━━━━━━━━━\n\n`
-      mensajeWhatsApp += `¡Gracias por su compra! 🙌`
+      mensajeWhatsApp += `🎁 *¡SORTEO DE FIN DE MES!* 🎁\n\n`
+      mensajeWhatsApp += `Al agendarnos, participás AUTOMÁTICAMENTE\n`
+      mensajeWhatsApp += `Prenda a elección\n`
+      mensajeWhatsApp += `📅 Sorteo: Último día del mes\n\n`
+      mensajeWhatsApp += `*¿QUERÉS DOBLE CHANCE?*\n`
+      mensajeWhatsApp += `✅ Seguinos en Instagram @Moon.importados \n`
+      mensajeWhatsApp += `✅ Compartí este mensaje con un amigo\n\n`
+      mensajeWhatsApp += `¡Gracias por tu compra! 🙌`
 
       const mensajeCodificado = encodeURIComponent(mensajeWhatsApp)
 
+      // 8. Mostrar resultado y enviar WhatsApp
       const result = await Swal.fire({
         title: '¡Venta Registrada! ✅',
         html: `
           <div style="text-align: left; font-size: 1rem;">
-            <p style="margin: 10px 0;"><strong>Total:</strong> <span style="color: #16a34a; font-size: 1.5rem; font-weight: bold;">$${total.toFixed(2)}</span></p>
+            <p style="margin: 10px 0;"><strong>Subtotal:</strong> <span style="color: #6b7280; font-size: 1.2rem;">$${totalBruto.toFixed(2)}</span></p>
+            ${aplicarDescuento && descuentoMonto > 0 ? `<p style="margin: 10px 0;"><strong>Descuento (${motivoDescuento}):</strong> <span style="color: #dc2626; font-size: 1.2rem;">-$${descuentoMonto.toFixed(2)}</span></p>` : ''}
+            <p style="margin: 10px 0;"><strong>Total:</strong> <span style="color: #16a34a; font-size: 1.5rem; font-weight: bold;">$${totalNeto.toFixed(2)}</span></p>
+            <p style="margin: 10px 0;"><strong>Pagado:</strong> <span style="color: #2563eb; font-size: 1.2rem;">$${Number(montoPagado).toFixed(2)}</span></p>
+            ${resta > 0 ? `<p style="margin: 10px 0;"><strong>Resta:</strong> <span style="color: #dc2626; font-size: 1.2rem; font-weight: bold;">$${resta.toFixed(2)}</span></p>` : ''}
             <p style="margin: 10px 0;"><strong>Productos:</strong> ${cart.length}</p>
+            <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;" />
+            <p style="margin: 10px 0; color: #16a34a; font-weight: 600;">🎁 ¡Cliente registrado para el sorteo!</p>
             <hr style="margin: 15px 0; border: 0; border-top: 1px solid #eee;" />
             <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #374151;">📱 Enviar comprobante por WhatsApp:</label>
             <input 
               id="swal-whatsapp-input" 
               type="text" 
-              placeholder="Ej: 5491123456789" 
+              placeholder="Ej: 11 1234 5678"
               style="width: 100%; padding: 12px; border: 2px solid #d1d5db; border-radius: 8px; font-size: 16px;"
-              value="${whatsappNumber}"
+              value="${clienteTelefono}"
             />
           </div>
         `,
@@ -130,28 +259,33 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
         },
         preConfirm: () => {
           const numero = document.getElementById('swal-whatsapp-input').value
-          setWhatsappNumber(numero)
           return numero
         }
       })
 
       if (result.isConfirmed && result.value) {
-        const url = `https://wa.me/${result.value}?text=${mensajeCodificado}`
+        const url = `https://wa.me/${formatWhatsAppNumber(result.value)}?text=${mensajeCodificado}`
         window.open(url, '_blank')
       }
       
+      // 9. Limpiar formulario
       setCart([])
+      setClienteTelefono('')
+      setClienteNombre('')
+      setMontoPagado(0)
+      setAplicarDescuento(false)
+      setValorDescuento(0)
+      setMotivoDescuento('Promoción')
       onSaleRecorded()
 
     } catch (err) {
       console.error(err)
-      Swal.fire({ title: 'Error', text: 'Error al procesar la venta.', icon: 'error', confirmButtonColor: '#dc2626' })
+      Swal.fire({ title: 'Error', text: 'Error al procesar la venta: ' + err.message, icon: 'error', confirmButtonColor: '#dc2626' })
     } finally {
       setIsProcessing(false)
     }
   }
 
-  // ✅ MÉTODO OFICIAL Y ESTABLE DE ZXING
   const handleScan = async () => {
     setIsScanning(true)
     isCancelledRef.current = false
@@ -170,10 +304,9 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
           }
         }, 30000)
 
-        // decodeFromVideoDevice maneja la cámara y el video element internamente
         codeReader.decodeFromVideoDevice(
-          undefined, // undefined = usa la cámara por defecto
-          'video',   // ID del elemento <video> en el JSX de abajo
+          undefined,
+          'video',
           (result, err) => {
             if (isCancelledRef.current) {
               clearTimeout(timeoutId)
@@ -187,7 +320,6 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
               resolve(result.getText())
             }
             
-            // Ignorar errores de "no encontrado" (son normales mientras busca)
             if (err && err.name !== 'NotFoundException') {
               console.warn('Error escaneando:', err)
             }
@@ -222,28 +354,15 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
       
       if (!isCancelledRef.current) {
         let mensaje = 'Error al escanear. Intentá de nuevo.'
+        if (err.name === 'NotAllowedError') mensaje = 'Permiso de cámara denegado.'
+        else if (err.name === 'NotFoundError') mensaje = 'No se encontró una cámara.'
+        else if (err.name === 'NotReadableError') mensaje = 'La cámara está en uso.'
+        else if (err.message === 'Tiempo de escaneo agotado') mensaje = 'No se detectó ningún código en 30 segundos.'
         
-        if (err.name === 'NotAllowedError') {
-          mensaje = 'Permiso de cámara denegado. Permití el acceso en la barra de direcciones.'
-        } else if (err.name === 'NotFoundError') {
-          mensaje = 'No se encontró una cámara en tu dispositivo.'
-        } else if (err.name === 'NotReadableError') {
-          mensaje = 'La cámara ya está siendo usada por otra aplicación.'
-        } else if (err.message === 'Tiempo de escaneo agotado') {
-          mensaje = 'No se detectó ningún código en 30 segundos. Intentá de nuevo con buena luz.'
-        }
-        
-        Swal.fire({
-          title: 'Error al escanear',
-          text: mensaje,
-          icon: 'error',
-          confirmButtonColor: '#dc2626'
-        })
+        Swal.fire({ title: 'Error al escanear', text: mensaje, icon: 'error', confirmButtonColor: '#dc2626' })
       }
     } finally {
       setIsScanning(false)
-      
-      // Limpieza correcta
       if (codeReaderRef.current) {
         codeReaderRef.current.reset()
         codeReaderRef.current = null
@@ -267,7 +386,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
       </h2>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* COLUMNA IZQUIERDA */}
+        {/* COLUMNA IZQUIERDA: BÚSQUEDA */}
         <div>
           <h3 className="text-xl font-bold text-gray-700 mb-3">1. Buscar Producto</h3>
           
@@ -319,7 +438,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
           )}
         </div>
 
-        {/* COLUMNA DERECHA: CARRITO */}
+        {/* COLUMNA DERECHA: CARRITO + CLIENTE + PAGO + DESCUENTO */}
         <div className="bg-gray-50 p-4 sm:p-6 rounded-xl border-2 border-gray-200 flex flex-col">
           <h3 className="text-xl font-bold text-gray-700 mb-3">2. Carrito de Venta</h3>
           
@@ -331,7 +450,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
             </div>
           ) : (
             <>
-              <div className="flex-1 overflow-y-auto max-h-80 space-y-3 mb-4">
+              <div className="flex-1 overflow-y-auto max-h-60 space-y-3 mb-4">
                 {cart.map(item => (
                   <div key={item.id} className="bg-white p-4 rounded-lg border border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
                     <div className="flex-1">
@@ -354,16 +473,184 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
                 ))}
               </div>
 
-              <div className="border-t-2 border-gray-300 pt-4 mt-auto">
-                <div className="flex justify-between items-center mb-4">
-                  <span className="text-xl font-bold text-gray-700">Total a Pagar:</span>
-                  <span className="text-3xl font-bold text-green-700">${total.toFixed(2)}</span>
+              {/* SECCIÓN CLIENTE */}
+              <div className="border-t-2 border-gray-300 pt-4 mt-4">
+                <h4 className="text-lg font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <User className="w-5 h-5" /> Datos del Cliente
+                </h4>
+                
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      type="tel"
+                      placeholder="Ej: 11 1234 5678"
+                      value={clienteTelefono}
+                      onChange={(e) => setClienteTelefono(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    />
+                  </div>
+                  <p className="text-xs text-gray-500 ml-1 flex items-center">
+                    <Info className="w-3 h-3 mr-1" /> Formato: sin 0 ni 15, ej: 11 1234 5678
+                  </p>
+                  
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Nombre y Apellido (opcional)"
+                      value={clienteNombre}
+                      onChange={(e) => setClienteNombre(e.target.value)}
+                      className="w-full pl-10 pr-4 py-3 border-2 border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    />
+                  </div>
                 </div>
+              </div>
+
+              {/* ✅ NUEVA SECCIÓN: DESCUENTOS */}
+              <div className="border-t-2 border-gray-300 pt-4 mt-4">
+                <h4 className="text-lg font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <Tag className="w-5 h-5" /> Descuentos y Promociones
+                </h4>
+                
+                <div className="space-y-3">
+                  {/* Switch para activar/desactivar descuento */}
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={aplicarDescuento}
+                      onChange={(e) => setAplicarDescuento(e.target.checked)}
+                      className="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                    />
+                    <span className="text-sm font-medium text-gray-700">Aplicar descuento a esta venta</span>
+                  </label>
+
+                  {aplicarDescuento && (
+                    <>
+                      {/* Tipo de descuento */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setTipoDescuento('porcentaje')}
+                          className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition ${
+                            tipoDescuento === 'porcentaje' 
+                              ? 'bg-green-600 text-white' 
+                              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                          }`}
+                        >
+                          <Percent className="w-4 h-4 inline mr-1" /> Porcentaje (%)
+                        </button>
+                        <button
+                          onClick={() => setTipoDescuento('monto')}
+                          className={`flex-1 py-2 px-3 rounded-lg text-sm font-semibold transition ${
+                            tipoDescuento === 'monto' 
+                              ? 'bg-green-600 text-white' 
+                              : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                          }`}
+                        >
+                          <DollarSign className="w-4 h-4 inline mr-1" /> Monto Fijo ($)
+                        </button>
+                      </div>
+
+                      {/* Input del valor */}
+                      <div className="relative">
+                        {tipoDescuento === 'porcentaje' ? (
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">%</span>
+                        ) : (
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
+                        )}
+                        <input
+                          type="number"
+                          placeholder={tipoDescuento === 'porcentaje' ? 'Ej: 10' : 'Ej: 500'}
+                          value={valorDescuento}
+                          onChange={(e) => setValorDescuento(Number(e.target.value))}
+                          className={`w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500`}
+                          min="0"
+                          max={tipoDescuento === 'porcentaje' ? 100 : totalBruto}
+                          step={tipoDescuento === 'porcentaje' ? 1 : 0.01}
+                        />
+                      </div>
+
+                      {/* Motivo del descuento */}
+                      <select
+                        value={motivoDescuento}
+                        onChange={(e) => setMotivoDescuento(e.target.value)}
+                        className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                      >
+                        <option value="Promoción">Promoción del día</option>
+                        <option value="Cliente VIP">Cliente VIP/Frecuente</option>
+                        <option value="Pequeño defecto">Pequeño defecto</option>
+                        <option value="Cierre de caja">Cierre de caja</option>
+                        <option value="Cupón">Cupón de descuento</option>
+                        <option value="Otro">Otro</option>
+                      </select>
+
+                      {/* Resumen del descuento */}
+                      {descuentoMonto > 0 && (
+                        <div className="bg-green-50 border-2 border-green-200 p-3 rounded-lg">
+                          <p className="text-sm text-green-700 font-semibold">
+                            Descuento aplicado: ${descuentoMonto.toFixed(2)}
+                            {tipoDescuento === 'porcentaje' && ` (${valorDescuento}%)`}
+                          </p>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* SECCIÓN PAGO */}
+              <div className="border-t-2 border-gray-300 pt-4 mt-4">
+                <h4 className="text-lg font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <DollarSign className="w-5 h-5" /> Pago
+                </h4>
+                
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-600">Subtotal:</span>
+                    <span className="font-bold text-lg text-gray-700">${totalBruto.toFixed(2)}</span>
+                  </div>
+                  
+                  {aplicarDescuento && descuentoMonto > 0 && (
+                    <div className="flex justify-between text-sm bg-green-50 p-2 rounded-lg border border-green-200">
+                      <span className="text-green-700 font-semibold">Descuento:</span>
+                      <span className="font-bold text-green-700">-${descuentoMonto.toFixed(2)}</span>
+                    </div>
+                  )}
+                  
+                  <div className="flex justify-between text-sm bg-blue-50 p-2 rounded-lg border border-blue-200">
+                    <span className="text-blue-700 font-bold">Total a Pagar:</span>
+                    <span className="font-bold text-lg text-blue-700">${totalNeto.toFixed(2)}</span>
+                  </div>
+                  
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
+                    <input
+                      type="number"
+                      placeholder="Monto pagado"
+                      value={montoPagado}
+                      onChange={(e) => setMontoPagado(e.target.value)}
+                      className="w-full pl-8 pr-4 py-3 border-2 border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                      min="0"
+                      max={totalNeto}
+                      step="0.01"
+                    />
+                  </div>
+                  
+                  {resta > 0 && (
+                    <div className="flex justify-between text-sm bg-red-50 p-2 rounded-lg border border-red-200">
+                      <span className="text-red-700 font-semibold">Resta (Deuda):</span>
+                      <span className="font-bold text-red-700">${resta.toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="border-t-2 border-gray-300 pt-4 mt-4">
                 <button
                   onClick={handleCheckout} disabled={isProcessing}
                   className="btn btn-success w-full" style={{ minHeight: '64px', fontSize: '20px' }}
                 >
-                  {isProcessing ? 'Procesando...' : '✅ Confirmar Venta'}
+                  {isProcessing ? 'Procesando...' : 'Confirmar Venta'}
                 </button>
               </div>
             </>
@@ -376,12 +663,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
         <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4">
           <div className="relative w-full max-w-md">
             <div className="relative w-full h-80 bg-black rounded-2xl overflow-hidden border-4 border-green-500 shadow-2xl">
-              <video 
-                id="video" 
-                className="w-full h-full object-cover"
-                autoPlay 
-                playsInline 
-              />
+              <video id="video" className="w-full h-full object-cover" autoPlay playsInline />
               <div className="absolute inset-0 pointer-events-none">
                 <div className="absolute top-1/2 left-0 right-0 h-0.5 bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.8)] animate-pulse" />
               </div>
@@ -390,11 +672,7 @@ function SalesForm({ onSaleRecorded, productos, cart, setCart }) {
             <div className="mt-6 text-center">
               <h3 className="text-xl font-bold text-white mb-2">Escaneá el código de barras</h3>
               <p className="text-gray-300 mb-6 text-sm">Apunta la cámara al código. Asegurate de tener buena luz.</p>
-              
-              <button
-                onClick={handleCloseScan}
-                className="btn btn-danger w-full"
-              >
+              <button onClick={handleCloseScan} className="btn btn-danger w-full">
                 <X className="w-5 h-5" /> Cancelar escaneo
               </button>
             </div>
