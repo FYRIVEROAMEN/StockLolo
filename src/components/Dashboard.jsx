@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Package, Plus, Edit2, Trash2, LogOut, Search, AlertTriangle, ShoppingCart, BarChart3, RotateCcw } from 'lucide-react'
+import { Package, Plus, Edit2, Trash2, LogOut, Search, AlertTriangle, ShoppingCart, BarChart3, RotateCcw, ChevronUp } from 'lucide-react'
 import { getProductosActivos, deactivateProducto, reactivateProducto, getProductosInactivos } from '../services/api'
 import ProductForm from './ProductForm'
 import SalesForm from './SalesForm'
@@ -22,7 +22,12 @@ function Dashboard({ onLogout }) {
   const [addedToCart, setAddedToCart] = useState(null)
   const [cart, setCart] = useState([])
   const [showMoreMenu, setShowMoreMenu] = useState(false)
-  const [selectedImage, setSelectedImage] = useState(null) // ✅ NUEVO: Para el lightbox
+  const [selectedImage, setSelectedImage] = useState(null) // ✅ Para el lightbox
+  
+
+  // ✅ NUEVO: Paginación "Ver más"
+  const [cantidadVisible, setCantidadVisible] = useState(12)
+  const PASO = 12
 
   const fetchProductos = useCallback(async () => {
     setLoading(true)
@@ -51,6 +56,28 @@ function Dashboard({ onLogout }) {
       setTimeout(() => setShowTutorial(true), 500)
     }
   }, [fetchProductos])
+
+  const [scrolled, setScrolled] = useState(false)
+  const [showScrollTop, setShowScrollTop] = useState(false) // ✅ NUEVO: Botón subir
+
+useEffect(() => {
+  const handleScroll = () => {
+    setScrolled(window.scrollY > 50)
+    setShowScrollTop(window.scrollY > 300) // ✅ NUEVO: Mostrar botón si bajó más de 300px
+  }
+  window.addEventListener('scroll', handleScroll)
+  return () => window.removeEventListener('scroll', handleScroll)
+}, [])
+
+// ✅ NUEVO: Función para subir
+const scrollToTop = () => {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
+  // ✅ NUEVO: Resetear paginación al buscar
+  useEffect(() => {
+    setCantidadVisible(PASO)
+  }, [search])
 
   const handleDelete = async (id) => {
   const result = await Swal.fire({
@@ -158,6 +185,9 @@ function Dashboard({ onLogout }) {
     p.color?.toLowerCase().includes(search.toLowerCase())
   )
 
+  // ✅ NUEVO: Lista recortada para el render (paginación)
+  const productosMostrados = filteredProductos.slice(0, cantidadVisible)
+
   const stockBajo = productos.filter(p => p.stock <= 5).length
   const totalProductos = productos.length
   const totalStock = productos.reduce((acc, p) => acc + (p.stock || 0), 0)
@@ -172,17 +202,26 @@ function Dashboard({ onLogout }) {
 
   return (
     <div className="min-h-screen pb-32 md:pb-8">
-      {/* HEADER COMPACTO */}
-      <header className="bg-white shadow-sm border-b sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
-          <h1 className="text-lg md:text-2xl font-bold text-gray-800 flex items-center gap-2">
-            <Package className="w-6 h-6 md:w-8 md:h-8 text-blue-600" /> Stock Mercadería
-          </h1>
-          <button onClick={onLogout} className="btn btn-secondary touch-target">
-            <LogOut className="w-5 h-5" /> <span className="hidden sm:inline">Salir</span>
-          </button>
-        </div>
-      </header>
+      {/* HEADER COMPACTO CON STOCKFLOW */}
+        <header className={`bg-white shadow-sm border-b sticky top-0 z-40 transition-all duration-200 ${
+          scrolled ? 'py-1.5' : 'py-3'
+        }`}>
+          <div className="max-w-7xl mx-auto px-4 flex justify-between items-center">
+            <h1 className="text-lg md:text-xl font-bold text-gray-800 flex items-center gap-2">
+              <div className={`bg-blue-600 rounded-lg flex items-center justify-center transition-all ${
+                scrolled ? 'w-7 h-7' : 'w-8 h-8'
+              }`}>
+                <Package className="w-4 h-4 md:w-5 h-5 text-white" />
+              </div>
+            <span className="text-lg md:text-xl font-bold">
+              Stock<span className="text-blue-600">Flow</span>
+            </span>
+            </h1>
+            <button onClick={onLogout} className="btn btn-secondary touch-target">
+              <LogOut className="w-5 h-5" /> <span className="hidden sm:inline">Salir</span>
+            </button>
+          </div>
+        </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="top-tabs">
@@ -205,13 +244,13 @@ function Dashboard({ onLogout }) {
           </button>
           <button onClick={() => setCurrentView('clientes')} className={`tab-btn ${currentView === 'clientes' ? 'active' : ''}`}>
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
             Clientes
           </button>
           <button onClick={() => setCurrentView('metrics')} className={`tab-btn ${currentView === 'metrics' ? 'active' : ''}`}>
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a-2 2 0 01-2 2h-2a-2 2 0 01-2-2z" />
             </svg>
             Métricas
           </button>
@@ -236,10 +275,10 @@ function Dashboard({ onLogout }) {
                     className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl border border-indigo-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
                   >
                     <div>
-                      <p className="text-xs text-indigo-700 font-medium">Total Items</p>
+                      <p className="text-xs text-indigo-700 font-medium">Mis Productos</p>
                       <p className="text-3xl font-bold text-indigo-900 mt-1">{totalProductos}</p>
                     </div>
-                    <p className="text-[10px] text-indigo-600">productos activos</p>
+                    <p className="text-[12px] text-indigo-600">Productos activos</p>
                   </button>
 
                   {/* Card 2: Stock Total -> Va a Inventario */}
@@ -251,53 +290,63 @@ function Dashboard({ onLogout }) {
                     className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
                   >
                     <div>
-                      <p className="text-xs text-blue-700 font-medium">Stock Total</p>
+                      <p className="text-blue-700 text-xs font-medium">Stock Disponible</p>
                       <p className="text-3xl font-bold text-blue-600 mt-1">{totalStock}</p>
                     </div>
-                    <p className="text-[10px] text-blue-600">unidades en inventario</p>
+                    <p className="text-[12px] text-blue-600">unidades en inventario</p>
                   </button>
 
-                  {/* Card 3: Alertas de Stock -> Va a Inventario */}
-                  <button
-                    onClick={() => {
-                      setCurrentView('dashboard');
-                      if (stockBajo > 0) setTimeout(() => scrollToProductos(), 100);
-                    }}
-                    className={`shrink-0 w-[70vw] h-[140px] p-3 rounded-2xl border flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer ${
-                      stockBajo > 0 
-                        ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
-                        : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
-                    }`}
-                  >
-                    <p className={`text-xs font-bold flex items-center gap-1 ${
-                      stockBajo > 0 ? 'text-red-700' : 'text-green-700'
-                    }`}>
-                      <AlertTriangle className="w-3 h-3" /> Alertas de Stock
-                      {stockBajo > 0 && <span className="ml-1">({stockBajo})</span>}
-                    </p>
-                    
-                    {stockBajo > 0 ? (
-                      <div className="mt-2 flex-1 overflow-y-auto space-y-1 pr-1">
-                        {productosEnRiesgo.slice(0, 5).map(p => (
-                          <div key={p.id} className="flex justify-between items-center text-[10px] leading-tight">
-                            <span className="truncate flex-1 text-red-800 font-medium">{p.nombre}</span>
-                            <span className="font-bold text-red-600 ml-1 text-[9px] whitespace-nowrap">
-                              {p.stock}{p.stock === 1 ? 'ud' : 'uds'}
-                            </span>
-                          </div>
-                        ))}
-                        {productosEnRiesgo.length > 5 && (
-                          <p className="text-red-600 text-[9px] font-semibold text-center mt-1">
-                            +{productosEnRiesgo.length - 5} más...
-                          </p>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="flex-1 flex items-center justify-center">
-                        <p className="text-xs text-green-700 font-medium">Todo en orden</p>
-                      </div>
-                    )}
-                  </button>
+                  
+{/* Card 3: Alertas de Stock */}
+<button
+  onClick={() => {
+    setCurrentView('dashboard');
+    if (stockBajo > 0) setTimeout(() => scrollToProductos(), 100);
+  }}
+  className={`shrink-0 w-[70vw] h-[140px] p-3 rounded-2xl border flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer ${
+    stockBajo > 0 
+      ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
+      : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
+  }`}
+>
+  <div className="flex items-center justify-between">
+    <p className={`text-sm font-bold flex items-center gap-1 ${
+      stockBajo > 0 ? 'text-red-800' : 'text-green-800'
+    }`}>
+      <AlertTriangle className={`w-3.5 h-3.5 ${stockBajo > 0 ? 'animate-pulse' : ''}`} /> 
+      {stockBajo > 0 ? '¡Atención!' : 'Stock OK'}
+    </p>
+    {stockBajo > 0 && (
+      <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-1 rounded-full animate-pulse">
+        ¡Atención!
+      </span>
+    )}
+  </div>
+  
+  {stockBajo > 0 ? (
+    <div className="mt-2 flex-1 overflow-y-auto pr-1 space-y-1">
+      {productosEnRiesgo.slice(0, 3).map(p => (
+        <div key={p.id} className="flex justify-between items-center">
+          <span className="text-[11px] font-semibold text-red-900 truncate pr-2">
+            {p.nombre}
+          </span>
+          <span className="text-[10px] font-bold text-red-700 whitespace-nowrap">
+            {p.stock} unid.
+          </span>
+        </div>
+      ))}
+      {productosEnRiesgo.length > 3 && (
+        <p className="text-red-600 text-[9px] font-semibold text-center mt-1">
+          +{productosEnRiesgo.length - 3} productos más
+        </p>
+      )}
+    </div>
+  ) : (
+    <div className="mt-2 flex-1 flex items-center justify-center">
+      <p className="text-sm text-green-800 font-medium">Todo en orden</p>
+    </div>
+  )}
+</button>
 
                   {/* DUPLICADO PARA SCROLL INFINITO */}
                   <button
@@ -305,7 +354,7 @@ function Dashboard({ onLogout }) {
                     className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl border border-indigo-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
                   >
                     <div>
-                      <p className="text-xs text-indigo-700 font-medium">Total Items</p>
+                      <p className="text-xs text-indigo-700 font-medium">Mis Productos</p>
                       <p className="text-3xl font-bold text-indigo-900 mt-1">{totalProductos}</p>
                     </div>
                     <p className="text-[10px] text-indigo-600">productos activos</p>
@@ -319,7 +368,7 @@ function Dashboard({ onLogout }) {
                     className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl border border-blue-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
                   >
                     <div>
-                      <p className="text-xs text-blue-700 font-medium">Stock Total</p>
+                      <p className="text-xs text-blue-700 font-medium">Stock Disponible</p>
                       <p className="text-3xl font-bold text-blue-600 mt-1">{totalStock}</p>
                     </div>
                     <p className="text-[10px] text-blue-600">unidades en inventario</p>
@@ -371,11 +420,11 @@ function Dashboard({ onLogout }) {
               {/* DESKTOP - Grid estático */}
               <div className="hidden sm:grid sm:grid-cols-3 gap-4">
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                  <p className="text-lg text-gray-600 font-medium">Total Productos</p>
+                  <p className="text-lg text-gray-600 font-medium">Mis Productos</p>
                   <p className="text-4xl font-bold text-gray-800 mt-2">{totalProductos}</p>
                 </div>
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                  <p className="text-lg text-gray-600 font-medium">Stock Total</p>
+                  <p className="text-lg text-gray-600 font-medium">Stock Disponible</p>
                   <p className="text-4xl font-bold text-blue-600 mt-2">{totalStock}</p>
                 </div>
                 <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -426,14 +475,16 @@ function Dashboard({ onLogout }) {
 
             {/* BARRA DE BÚSQUEDA Y BOTÓN AGREGAR */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
-              <div className="relative flex-1 max-w-md w-full">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-6 h-6 text-gray-400" />
+              <div className="relative flex-1 max-w-md w-full group">
+                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400 group-focus-within:text-blue-600 transition-colors duration-200" />
                 <input
                   type="text"
-                  placeholder="Buscar por nombre, categoría o color..."
+                  placeholder="Buscar producto..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
-                  className="w-full pl-12 pr-4 py-3 border-2 border-gray-300 rounded-lg text-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  className="w-full pl-11 pr-4 py-2.5 border-2 border-gray-300 rounded-xl text-base bg-white
+                            focus:outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/20 
+                            hover:border-gray-400 transition-all duration-200"
                 />
               </div>
               <button
@@ -450,9 +501,9 @@ function Dashboard({ onLogout }) {
                 filteredProductos.length === 0 ? (
                   <div className="empty-state">{search ? 'No se encontraron productos.' : 'No hay productos. ¡Agrega el primero!'}</div>
                 ) : (
-                  filteredProductos.map((p) => (
+                  productosMostrados.map((p) => (
                     <div key={p.id} className="product-card">
-                      {/* ✅ IMAGEN CON LIGHTBOX */}
+                      {/* IMAGEN CON LIGHTBOX */}
                       {p.imagen_url ? (
                         <div 
                           onClick={() => setSelectedImage(p.imagen_url)}
@@ -522,7 +573,7 @@ function Dashboard({ onLogout }) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {filteredProductos.map((p) => (
+                      {productosMostrados.map((p) => (
                         <tr key={p.id} className="hover:bg-blue-50 transition">
                           <td className="px-6 py-4">
                             {p.imagen_url ? (
@@ -570,6 +621,23 @@ function Dashboard({ onLogout }) {
                 </div>
               )}
             </div>
+
+            {/* ✅ NUEVO: PAGINACIÓN "VER MÁS" (visible en mobile y desktop) */}
+            {!loading && filteredProductos.length > 0 && (
+              <div className="mt-4 mb-6 px-4 py-4 bg-white rounded-xl shadow-sm border border-gray-200">
+                <p className="text-center text-sm text-gray-600 mb-3">
+                  Mostrando {Math.min(cantidadVisible, filteredProductos.length)} de {filteredProductos.length} productos
+                </p>
+                {filteredProductos.length > cantidadVisible && (
+                  <button
+                    onClick={() => setCantidadVisible(c => c + PASO)}
+                    className="w-full py-3 rounded-xl border-2 border-blue-600 text-blue-600 font-semibold hover:bg-blue-50 active:scale-95 transition-all duration-200"
+                  >
+                    Ver más ({filteredProductos.length - cantidadVisible} restantes)
+                  </button>
+                )}
+              </div>
+            )}
 
             <div className="text-center mt-8">
               <button onClick={() => { setShowInactive(!showInactive); if (!showInactive) fetchProductosInactivos(); }} className="btn btn-secondary">
@@ -655,7 +723,7 @@ function Dashboard({ onLogout }) {
               className="w-full text-left px-5 py-4 text-gray-700 hover:bg-blue-50 flex items-center gap-3 border-b border-gray-100"
             >
               <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               <div>
                 <p className="font-semibold">Clientes</p>
@@ -667,7 +735,7 @@ function Dashboard({ onLogout }) {
               className="w-full text-left px-5 py-4 text-gray-700 hover:bg-blue-50 flex items-center gap-3"
             >
               <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a-2 2 0 01-2 2h-2a-2 2 0 01-2-2z" />
               </svg>
               <div>
                 <p className="font-semibold">Métricas</p>
@@ -681,7 +749,26 @@ function Dashboard({ onLogout }) {
       {showForm && <ProductForm onClose={() => setShowForm(false)} editId={editId} onSave={fetchProductos} />}
       {showTutorial && <Tutorial onComplete={() => setShowTutorial(false)} />}
 
-      {/* ️ LIGHTBOX DE IMAGEN - Solo mobile */}
+
+      {/* ✅ NUEVO: BOTÓN SCROLL TO TOP */}
+      {showScrollTop && (
+        <button
+          onClick={scrollToTop}
+          className="fixed bottom-24 right-4 z-40 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-full p-4 shadow-lg transition-all duration-300 animate-in fade-in slide-in-from-bottom-4"
+          style={{
+            width: '56px',
+            height: '56px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+          title="Subir arriba"
+        >
+          <ChevronUp className="w-6 h-6" />
+        </button>
+      )}
+
+      {/* LIGHTBOX DE IMAGEN - Solo mobile */}
       {selectedImage && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-90 z-[100] flex items-center justify-center p-4 sm:hidden"
@@ -698,7 +785,7 @@ function Dashboard({ onLogout }) {
           </button>
 
           {/* Imagen centrada con efecto */}
-          <img 
+                   <img 
             src={selectedImage} 
             alt="Producto" 
             className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300"
@@ -712,7 +799,7 @@ function Dashboard({ onLogout }) {
         </div>
       )}
     </div>
-  )
+  )   
 }
 
 export default Dashboard
