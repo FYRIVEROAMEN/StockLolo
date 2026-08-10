@@ -9,6 +9,13 @@ import Swal from 'sweetalert2'
 import MetricsView from './MetricsView'
 import ClientesView from './ClientesView'
 
+// ✅ FUNCIÓN UTILITARIA PARA OPTIMIZAR IMÁGENES DE CLOUDINARY
+const optimizeImage = (url, width = 800) => {
+  if (!url) return ''
+  // Inserta transformaciones después de "/upload/"
+  return url.replace('/upload/', `/upload/w_${width},f_auto,q_auto,dpr_auto/`)
+}
+
 function Dashboard({ onLogout }) {
   const [productos, setProductos] = useState([])
   const [search, setSearch] = useState('')
@@ -22,10 +29,9 @@ function Dashboard({ onLogout }) {
   const [addedToCart, setAddedToCart] = useState(null)
   const [cart, setCart] = useState([])
   const [showMoreMenu, setShowMoreMenu] = useState(false)
-  const [selectedImage, setSelectedImage] = useState(null) // ✅ Para el lightbox
+  const [selectedImage, setSelectedImage] = useState(null)
   
-
-  // ✅ NUEVO: Paginación "Ver más"
+  // Paginación "Ver más"
   const [cantidadVisible, setCantidadVisible] = useState(12)
   const PASO = 12
 
@@ -58,67 +64,65 @@ function Dashboard({ onLogout }) {
   }, [fetchProductos])
 
   const [scrolled, setScrolled] = useState(false)
-  const [showScrollTop, setShowScrollTop] = useState(false) // ✅ NUEVO: Botón subir
+  const [showScrollTop, setShowScrollTop] = useState(false)
 
-useEffect(() => {
-  const handleScroll = () => {
-    setScrolled(window.scrollY > 50)
-    setShowScrollTop(window.scrollY > 300) // ✅ NUEVO: Mostrar botón si bajó más de 300px
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 50)
+      setShowScrollTop(window.scrollY > 300)
+    }
+    window.addEventListener('scroll', handleScroll)
+    return () => window.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  const scrollToTop = () => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
-  window.addEventListener('scroll', handleScroll)
-  return () => window.removeEventListener('scroll', handleScroll)
-}, [])
 
-// ✅ NUEVO: Función para subir
-const scrollToTop = () => {
-  window.scrollTo({ top: 0, behavior: 'smooth' })
-}
-
-  // ✅ NUEVO: Resetear paginación al buscar
   useEffect(() => {
     setCantidadVisible(PASO)
   }, [search])
 
   const handleDelete = async (id) => {
-  const result = await Swal.fire({
-    title: '¿Desactivar producto?',
-    html: `
-      <p style="margin-bottom: 10px;">Este producto dejará de aparecer en el inventario.</p>
-      <p style="color: #6b7280; font-size: 0.9rem;">
-        No se borrará de la base de datos para no romper el historial de ventas.
-        Podés reactivarlo después desde "Ver productos desactivados".
-      </p>
-    `,
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonText: 'Sí, desactivar',
-    cancelButtonText: 'Cancelar',
-    confirmButtonColor: '#dc2626',
-    cancelButtonColor: '#6b7280'
-  })
+    const result = await Swal.fire({
+      title: '¿Desactivar producto?',
+      html: `
+        <p style="margin-bottom: 10px;">Este producto dejará de aparecer en el inventario.</p>
+        <p style="color: #6b7280; font-size: 0.9rem;">
+          No se borrará de la base de datos para no romper el historial de ventas.
+          Podés reactivarlo después desde "Ver productos desactivados".
+        </p>
+      `,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Sí, desactivar',
+      cancelButtonText: 'Cancelar',
+      confirmButtonColor: '#dc2626',
+      cancelButtonColor: '#6b7280'
+    })
 
-  if (result.isConfirmed) {
-    try {
-      await deactivateProducto(id)
-      fetchProductos()
-      Swal.fire({
-        title: 'Producto desactivado',
-        text: 'Podés reactivarlo cuando quieras',
-        icon: 'success',
-        timer: 2000,
-        showConfirmButton: false
-      })
-    } catch (err) {
-      Swal.fire({
-        title: 'Error',
-        text: err.response?.data?.message || err.message,
-        icon: 'error'
-      })
+    if (result.isConfirmed) {
+      try {
+        await deactivateProducto(id)
+        fetchProductos()
+        Swal.fire({
+          title: 'Producto desactivado',
+          text: 'Podés reactivarlo cuando quieras',
+          icon: 'success',
+          timer: 2000,
+          showConfirmButton: false
+        })
+      } catch (err) {
+        Swal.fire({
+          title: 'Error',
+          text: err.response?.data?.message || err.message,
+          icon: 'error'
+        })
+      }
     }
   }
-}
 
-   const handleReactivar = async (id) => {
+  const handleReactivar = async (id) => {
     try {
       await reactivateProducto(id)
       fetchProductosInactivos()
@@ -185,7 +189,6 @@ const scrollToTop = () => {
     p.color?.toLowerCase().includes(search.toLowerCase())
   )
 
-  // ✅ NUEVO: Lista recortada para el render (paginación)
   const productosMostrados = filteredProductos.slice(0, cantidadVisible)
 
   const stockBajo = productos.filter(p => p.stock <= 5).length
@@ -203,25 +206,25 @@ const scrollToTop = () => {
   return (
     <div className="min-h-screen pb-32 md:pb-8">
       {/* HEADER COMPACTO CON STOCKFLOW */}
-        <header className={`bg-white shadow-sm border-b sticky top-0 z-40 transition-all duration-200 ${
-          scrolled ? 'py-1.5' : 'py-3'
-        }`}>
-          <div className="max-w-7xl mx-auto px-4 flex justify-between items-center">
-            <h1 className="text-lg md:text-xl font-bold text-gray-800 flex items-center gap-2">
-              <div className={`bg-blue-600 rounded-lg flex items-center justify-center transition-all ${
-                scrolled ? 'w-7 h-7' : 'w-8 h-8'
-              }`}>
-                <Package className="w-4 h-4 md:w-5 h-5 text-white" />
-              </div>
+      <header className={`bg-white shadow-sm border-b sticky top-0 z-40 transition-all duration-200 ${
+        scrolled ? 'py-1.5' : 'py-3'
+      }`}>
+        <div className="max-w-7xl mx-auto px-4 flex justify-between items-center">
+          <h1 className="text-lg md:text-xl font-bold text-gray-800 flex items-center gap-2">
+            <div className={`bg-blue-600 rounded-lg flex items-center justify-center transition-all ${
+              scrolled ? 'w-7 h-7' : 'w-8 h-8'
+            }`}>
+              <Package className="w-4 h-4 md:w-5 h-5 text-white" />
+            </div>
             <span className="text-lg md:text-xl font-bold">
               Stock<span className="text-blue-600">Flow</span>
             </span>
-            </h1>
-            <button onClick={onLogout} className="btn btn-secondary touch-target">
-              <LogOut className="w-5 h-5" /> <span className="hidden sm:inline">Salir</span>
-            </button>
-          </div>
-        </header>
+          </h1>
+          <button onClick={onLogout} className="btn btn-secondary touch-target">
+            <LogOut className="w-5 h-5" /> <span className="hidden sm:inline">Salir</span>
+          </button>
+        </div>
+      </header>
 
       <main className="max-w-7xl mx-auto px-4 py-6">
         <div className="top-tabs">
@@ -258,18 +261,16 @@ const scrollToTop = () => {
 
         {currentView === 'dashboard' ? (
           <>
-            {/* ==========================================
-                STATS: Cards compactas (mobile) / Grid (desktop)
-                ========================================== */}
+            {/* STATS: Cards compactas (mobile) / Grid (desktop) */}
             <div className="mb-6">
-              {/* MOBILE - Carrusel MANUAL (sin auto-scroll) */}
+              {/* MOBILE - Carrusel MANUAL */}
               <div 
                 className="sm:hidden overflow-x-auto -mx-4 px-4"
                 style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
               >
                 <div className="flex gap-3 pb-2" style={{ width: 'max-content' }}>
                   
-                  {/* Card 1: Total Items -> Va a Métricas */}
+                  {/* Card 1: Total Items */}
                   <button
                     onClick={() => setCurrentView('metrics')}
                     className="shrink-0 w-[70vw] h-[140px] p-3 bg-gradient-to-br from-indigo-50 to-indigo-100 rounded-2xl border border-indigo-200 flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
@@ -281,7 +282,7 @@ const scrollToTop = () => {
                     <p className="text-[12px] text-indigo-600">Productos activos</p>
                   </button>
 
-                  {/* Card 2: Stock Total -> Va a Inventario */}
+                  {/* Card 2: Stock Total */}
                   <button
                     onClick={() => {
                       setCurrentView('dashboard');
@@ -296,57 +297,56 @@ const scrollToTop = () => {
                     <p className="text-[12px] text-blue-600">unidades en inventario</p>
                   </button>
 
-                  
-{/* Card 3: Alertas de Stock */}
-<button
-  onClick={() => {
-    setCurrentView('dashboard');
-    if (stockBajo > 0) setTimeout(() => scrollToProductos(), 100);
-  }}
-  className={`shrink-0 w-[70vw] h-[140px] p-3 rounded-2xl border flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer ${
-    stockBajo > 0 
-      ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
-      : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
-  }`}
->
-  <div className="flex items-center justify-between">
-    <p className={`text-sm font-bold flex items-center gap-1 ${
-      stockBajo > 0 ? 'text-red-800' : 'text-green-800'
-    }`}>
-      <AlertTriangle className={`w-3.5 h-3.5 ${stockBajo > 0 ? 'animate-pulse' : ''}`} /> 
-      {stockBajo > 0 ? '¡Atención!' : 'Stock OK'}
-    </p>
-    {stockBajo > 0 && (
-      <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-1 rounded-full animate-pulse">
-        ¡Atención!
-      </span>
-    )}
-  </div>
-  
-  {stockBajo > 0 ? (
-    <div className="mt-2 flex-1 overflow-y-auto pr-1 space-y-1">
-      {productosEnRiesgo.slice(0, 3).map(p => (
-        <div key={p.id} className="flex justify-between items-center">
-          <span className="text-[11px] font-semibold text-red-900 truncate pr-2">
-            {p.nombre}
-          </span>
-          <span className="text-[10px] font-bold text-red-700 whitespace-nowrap">
-            {p.stock} unid.
-          </span>
-        </div>
-      ))}
-      {productosEnRiesgo.length > 3 && (
-        <p className="text-red-600 text-[9px] font-semibold text-center mt-1">
-          +{productosEnRiesgo.length - 3} productos más
-        </p>
-      )}
-    </div>
-  ) : (
-    <div className="mt-2 flex-1 flex items-center justify-center">
-      <p className="text-sm text-green-800 font-medium">Todo en orden</p>
-    </div>
-  )}
-</button>
+                  {/* Card 3: Alertas de Stock */}
+                  <button
+                    onClick={() => {
+                      setCurrentView('dashboard');
+                      if (stockBajo > 0) setTimeout(() => scrollToProductos(), 100);
+                    }}
+                    className={`shrink-0 w-[70vw] h-[140px] p-3 rounded-2xl border flex flex-col justify-between hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer ${
+                      stockBajo > 0 
+                        ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' 
+                        : 'bg-gradient-to-br from-green-50 to-green-100 border-green-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className={`text-sm font-bold flex items-center gap-1 ${
+                        stockBajo > 0 ? 'text-red-800' : 'text-green-800'
+                      }`}>
+                        <AlertTriangle className={`w-3.5 h-3.5 ${stockBajo > 0 ? 'animate-pulse' : ''}`} /> 
+                        {stockBajo > 0 ? '¡Atención!' : 'Stock OK'}
+                      </p>
+                      {stockBajo > 0 && (
+                        <span className="bg-red-600 text-white text-[10px] font-bold px-2 py-1 rounded-full animate-pulse">
+                          ¡Atención!
+                        </span>
+                      )}
+                    </div>
+                    
+                    {stockBajo > 0 ? (
+                      <div className="mt-2 flex-1 overflow-y-auto pr-1 space-y-1">
+                        {productosEnRiesgo.slice(0, 3).map(p => (
+                          <div key={p.id} className="flex justify-between items-center">
+                            <span className="text-[11px] font-semibold text-red-900 truncate pr-2">
+                              {p.nombre}
+                            </span>
+                            <span className="text-[10px] font-bold text-red-700 whitespace-nowrap">
+                              {p.stock} unid.
+                            </span>
+                          </div>
+                        ))}
+                        {productosEnRiesgo.length > 3 && (
+                          <p className="text-red-600 text-[9px] font-semibold text-center mt-1">
+                            +{productosEnRiesgo.length - 3} productos más
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-2 flex-1 flex items-center justify-center">
+                        <p className="text-sm text-green-800 font-medium">Todo en orden</p>
+                      </div>
+                    )}
+                  </button>
 
                   {/* DUPLICADO PARA SCROLL INFINITO */}
                   <button
@@ -495,7 +495,7 @@ const scrollToTop = () => {
               </button>
             </div>
 
-            {/* VISTA MOBILE: Cards con IMAGEN */}
+            {/* VISTA MOBILE: Cards con IMAGEN OPTIMIZADA */}
             <div className="product-cards-mobile">
               {loading ? <div className="loading-state">Cargando productos...</div> : 
                 filteredProductos.length === 0 ? (
@@ -503,7 +503,7 @@ const scrollToTop = () => {
                 ) : (
                   productosMostrados.map((p) => (
                     <div key={p.id} className="product-card">
-                      {/* IMAGEN CON LIGHTBOX */}
+                      {/* ✅ IMAGEN OPTIMIZADA PARA THUMBNAIL (600px) */}
                       {p.imagen_url ? (
                         <div 
                           onClick={() => setSelectedImage(p.imagen_url)}
@@ -511,12 +511,11 @@ const scrollToTop = () => {
                           style={{ marginBottom: '12px', borderRadius: '12px', overflow: 'hidden', background: '#f3f4f6' }}
                         >
                           <img 
-                            src={p.imagen_url} 
+                            src={optimizeImage(p.imagen_url, 600)} 
                             alt={p.nombre} 
                             style={{ width: '100%', height: '180px', objectFit: 'cover', display: 'block' }} 
                             onError={(e) => { e.target.style.display = 'none'; }} 
                           />
-                          {/* Ícono de lupa sutil */}
                           <div className="absolute top-2 right-2 bg-black bg-opacity-40 rounded-full p-1.5 opacity-0 hover:opacity-100 transition-opacity">
                             <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
@@ -559,7 +558,7 @@ const scrollToTop = () => {
               }
             </div>
 
-            {/* VISTA DESKTOP: Tabla con IMAGEN */}
+            {/* VISTA DESKTOP: Tabla con IMAGEN OPTIMIZADA */}
             <div className="product-table-desktop bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
               {loading ? <div className="loading-state">Cargando productos...</div> : (
                 <div className="overflow-x-auto">
@@ -576,9 +575,10 @@ const scrollToTop = () => {
                       {productosMostrados.map((p) => (
                         <tr key={p.id} className="hover:bg-blue-50 transition">
                           <td className="px-6 py-4">
+                            {/* ✅ IMAGEN OPTIMIZADA PARA THUMBNAIL PEQUEÑO (150px) */}
                             {p.imagen_url ? (
                               <img 
-                                src={p.imagen_url} 
+                                src={optimizeImage(p.imagen_url, 150)} 
                                 alt={p.nombre} 
                                 style={{ width: '50px', height: '50px', objectFit: 'cover', borderRadius: '8px', cursor: 'pointer' }} 
                                 onClick={() => setSelectedImage(p.imagen_url)}
@@ -622,7 +622,7 @@ const scrollToTop = () => {
               )}
             </div>
 
-            {/* ✅ NUEVO: PAGINACIÓN "VER MÁS" (visible en mobile y desktop) */}
+            {/* PAGINACIÓN "VER MÁS" */}
             {!loading && filteredProductos.length > 0 && (
               <div className="mt-4 mb-6 px-4 py-4 bg-white rounded-xl shadow-sm border border-gray-200">
                 <p className="text-center text-sm text-gray-600 mb-3">
@@ -707,7 +707,6 @@ const scrollToTop = () => {
           <BarChart3 className="w-6 h-6" /> <span>Historial</span>
         </button>
         
-        {/* Botón "Más" */}
         <button onClick={() => setShowMoreMenu(!showMoreMenu)} className={`nav-item ${showMoreMenu ? 'active' : ''}`}>
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
@@ -715,7 +714,6 @@ const scrollToTop = () => {
           <span>Más</span>
         </button>
 
-        {/* Menú desplegable */}
         {showMoreMenu && (
           <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-64 bg-white rounded-2xl shadow-2xl border border-gray-200 z-50 overflow-hidden">
             <button 
@@ -749,8 +747,7 @@ const scrollToTop = () => {
       {showForm && <ProductForm onClose={() => setShowForm(false)} editId={editId} onSave={fetchProductos} />}
       {showTutorial && <Tutorial onComplete={() => setShowTutorial(false)} />}
 
-
-      {/* ✅ NUEVO: BOTÓN SCROLL TO TOP */}
+      {/* BOTÓN SCROLL TO TOP */}
       {showScrollTop && (
         <button
           onClick={scrollToTop}
@@ -768,13 +765,12 @@ const scrollToTop = () => {
         </button>
       )}
 
-      {/* LIGHTBOX DE IMAGEN - Solo mobile */}
+      {/* LIGHTBOX DE IMAGEN OPTIMIZADO */}
       {selectedImage && (
         <div 
           className="fixed inset-0 bg-black bg-opacity-90 z-[100] flex items-center justify-center p-4 sm:hidden"
           onClick={() => setSelectedImage(null)}
         >
-          {/* Botón cerrar */}
           <button 
             onClick={() => setSelectedImage(null)}
             className="absolute top-4 right-4 bg-white bg-opacity-20 hover:bg-opacity-30 text-white rounded-full p-2 transition-all z-10"
@@ -784,15 +780,14 @@ const scrollToTop = () => {
             </svg>
           </button>
 
-          {/* Imagen centrada con efecto */}
-                   <img 
-            src={selectedImage} 
+          {/* ✅ IMAGEN OPTIMIZADA PARA LIGHTBOX (1200px) */}
+          <img 
+            src={optimizeImage(selectedImage, 1200)} 
             alt="Producto" 
             className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl animate-in zoom-in-95 duration-300"
             onClick={(e) => e.stopPropagation()}
           />
 
-          {/* Instrucción sutil */}
           <p className="absolute bottom-8 text-white text-opacity-60 text-sm">
             Tocá fuera para cerrar
           </p>

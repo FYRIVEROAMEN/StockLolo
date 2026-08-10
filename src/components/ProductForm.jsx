@@ -38,20 +38,44 @@ function ProductForm({ onClose, editId, onSave }) {
             barcode: p.barcode || ''
           })
           if (p.imagen_url) {
-            setImagenURL(p.imagen_url)
-            setImagenPreview(p.imagen_url)
+            // ✅ OPTIMIZACIÓN: Usar versión pequeña para preview en edición
+            const optimizedUrl = p.imagen_url.replace('/upload/', '/upload/w_300,f_auto,q_auto/')
+            setImagenURL(p.imagen_url) // Guardamos la original para no perderla
+            setImagenPreview(optimizedUrl) // Mostramos la liviana
           }
         }
       })
     }
   }, [editId])
 
-
- 
+  // ✅ NUEVA FUNCIÓN: Generar thumbnail liviano para preview
+  const generateThumbnail = (file) => {
+    return new Promise((resolve) => {
+      const img = new Image()
+      img.src = URL.createObjectURL(file)
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const MAX_WIDTH = 300 // Tamaño suficiente para preview
+        const scaleSize = MAX_WIDTH / img.width
+        canvas.width = MAX_WIDTH
+        canvas.height = img.height * scaleSize
+        
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+        
+        canvas.toBlob((blob) => {
+          resolve(URL.createObjectURL(blob))
+          URL.revokeObjectURL(img.src)
+        }, 'image/jpeg', 0.7) // Calidad 70% es perfecta para thumbnails
+      }
+      img.onerror = () => resolve(URL.createObjectURL(file)) // Fallback
+    })
+  }
 
   const subirImagenCloudinary = async (file) => {
     let fileToUpload = file
     
+    // Tu lógica existente de WebP a JPEG está perfecta, la mantenemos
     if (file.type === 'image/webp') {
       try {
         const img = new Image()
@@ -86,14 +110,19 @@ function ProductForm({ onClose, editId, onSave }) {
         body: formData
       })
       const data = await response.json()
-      return data.secure_url
+      
+      // ✅ OPTIMIZACIÓN: Guardar URL con f_auto,q_auto por defecto
+      // Así cualquier uso futuro de esta URL ya viene optimizada
+      const optimizedUrl = data.secure_url.replace('/upload/', '/upload/f_auto,q_auto/')
+      return optimizedUrl
+      
     } catch (error) {
       console.error('Error subiendo imagen:', error)
       return null
     }
   }
 
-  // ✅ MÉTODO OFICIAL Y ESTABLE DE ZXING
+  // ✅ MÉTODO OFICIAL Y ESTABLE DE ZXING (Sin cambios, funciona perfecto)
   const handleScanBarcode = async () => {
     setIsScanning(true)
     isCancelledRef.current = false
@@ -275,11 +304,13 @@ function ProductForm({ onClose, editId, onSave }) {
             <input
               type="file"
               accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-              onChange={(e) => {
+              onChange={async (e) => {
                 const file = e.target.files[0]
                 if (file) {
                   setImagenFile(file)
-                  setImagenPreview(URL.createObjectURL(file))
+                  // ✅ OPTIMIZACIÓN: Usar thumbnail generado en lugar de archivo original
+                  const thumbUrl = await generateThumbnail(file)
+                  setImagenPreview(thumbUrl)
                 }
               }}
               className="input-lg"
